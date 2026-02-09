@@ -1,0 +1,44 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: 'Inter', sans-serif;
+  margin: 0;
+  padding: 0;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+::-webkit-scrollbar-thumb {
+  background: #888;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+/* Markdown content styling */
+.markdown-content h1, .markdown-content h2, .markdown-content h3 {
+  margin-top: 0.5em;
+  margin-bottom: 0.25em;
+  font-weight: 600;
+}
+.markdown-content ul, .markdown-content ol {
+  padding-left: 1.5em;
+  margin: 0.5em 0;
+}
+.markdown-content p {
+  margin: 0.25em 0;
+}
+.markdown-content code {
+  background: #f4f4f5;
+  padding: 0.15em 0.3em;
+  border-radius: 0.25em;
+  font-size: 0.9em;
+}

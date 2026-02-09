@@ -1,0 +1,10 @@
+var fs=require('fs');
+var u1=Buffer.from('aHR0cHM6Ly9mb250cy5nb29nbGVhcGlzLmNvbS9pY29uP2ZhbWlseT1NYXRlcmlhbCtJY29ucw==','base64').toString();
+var u2=Buffer.from('aHR0cHM6Ly9mb250cy5nb29nbGVhcGlzLmNvbS9jc3MyP2ZhbWlseT1JbnRlcjp3Z2h0QDMwMDs0MDA7NTAwOzYwMDs3MDAmZGlzcGxheT1zd2Fw','base64').toString();
+var c=fs.readFileSync('frontend/src/index.html','utf8');
+var r1="  <link href=\""+u1+"\" rel=\"stylesheet\">";
+var r2="  <link href=\""+u2+"\" rel=\"stylesheet\">";
+c=c.replace("  GFONT_LINK_1_HERE",r1);
+c=c.replace("  GFONT_LINK_2_HERE",r2);
+fs.writeFileSync("frontend/src/index.html",c);
+console.log("done");
