@@ -44,6 +44,8 @@ qdrant_data/
 
 # Logs
 *.log
+.claude/
+CLAUDE.md
 
 # Tests
 .coverage
