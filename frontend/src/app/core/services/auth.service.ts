@@ -17,7 +17,7 @@ export class AuthService {
   isAuthenticated = computed(() => !!this.currentUser());
   isAdmin = computed(() => this.currentUser()?.role === 'admin');
 
-  readonly ready: Promise<void>;
+  ready: Promise<void>;
 
   constructor(
     private http: HttpClient,
@@ -44,6 +44,7 @@ export class AuthService {
         if (response.success) {
           this.tokenService.setTokens(response.data.access_token, response.data.refresh_token);
           this.currentUser.set(response.data.user);
+          this.ready = Promise.resolve();
         }
       })
     );
@@ -55,6 +56,7 @@ export class AuthService {
         if (response.success) {
           this.tokenService.setTokens(response.data.access_token, response.data.refresh_token);
           this.currentUser.set(response.data.user);
+          this.ready = Promise.resolve();
         }
       })
     );

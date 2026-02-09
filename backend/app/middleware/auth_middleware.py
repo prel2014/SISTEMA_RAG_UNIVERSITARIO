@@ -1,7 +1,7 @@
 from flask import jsonify
 from flask_jwt_extended import get_jwt_identity, verify_jwt_in_request
 from functools import wraps
-from app.models.user import User
+from app.db import call_fn
 
 
 def register_jwt_callbacks(jwt):
@@ -40,7 +40,7 @@ def register_jwt_callbacks(jwt):
 
 def get_current_user():
     user_id = get_jwt_identity()
-    return User.query.get(user_id)
+    return call_fn('fn_get_user_by_id', (user_id,), fetch_one=True)
 
 
 def auth_required(fn):
@@ -54,7 +54,7 @@ def auth_required(fn):
                 'error': 'Usuario no encontrado',
                 'message': 'El usuario asociado al token no existe.'
             }), 401
-        if not user.is_active:
+        if not user['is_active']:
             return jsonify({
                 'success': False,
                 'error': 'Cuenta desactivada',

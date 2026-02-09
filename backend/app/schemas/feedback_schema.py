@@ -1,8 +1,7 @@
-from app.extensions import ma
-from marshmallow import fields, validate
+from marshmallow import Schema, fields, validate
 
 
-class FeedbackSchema(ma.Schema):
+class FeedbackSchema(Schema):
     id = fields.String(dump_only=True)
     chat_history_id = fields.String(required=True)
     user_id = fields.String(dump_only=True)
@@ -11,7 +10,7 @@ class FeedbackSchema(ma.Schema):
     created_at = fields.DateTime(dump_only=True)
 
 
-class FeedbackCreateSchema(ma.Schema):
+class FeedbackCreateSchema(Schema):
     chat_history_id = fields.String(required=True)
     rating = fields.Integer(required=True, validate=validate.OneOf([1, -1]))
     comment = fields.String(allow_none=True)

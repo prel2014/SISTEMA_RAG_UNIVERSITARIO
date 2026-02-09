@@ -12,6 +12,8 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
         Authorization: `Bearer ${token}`
       }
     });
+  } else if (!token && !req.url.includes('/auth/login') && !req.url.includes('/auth/register')) {
+    console.warn('[Auth Interceptor] Petición sin token:', req.url);
   }
 
   return next(req);

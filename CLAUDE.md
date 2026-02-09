@@ -4,119 +4,125 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-UPAO RAG is a Retrieval-Augmented Generation chatbot for Universidad Privada Antenor Orrego. Users ask questions and get answers grounded in uploaded institutional documents. It has a Flask REST API backend, an Angular 18 SPA frontend, and uses Ollama for LLM/embeddings + Qdrant for vector search.
+UPAO RAG is a Retrieval-Augmented Generation chatbot for Universidad Privada Antenor Orrego. Users ask questions and get answers grounded in uploaded institutional documents. Flask REST API backend, Angular 18 SPA frontend, Ollama for LLM/embeddings, Qdrant for vector search.
 
-## Development Setup
-
-Infrastructure (PostgreSQL + Qdrant) runs in Docker. Backend and frontend run locally on the host.
+## Development Commands
 
 ```bash
-# 1. Start infrastructure
-make up                # docker compose up -d (PostgreSQL on :5433, Qdrant on :6333)
+# Infrastructure (PostgreSQL + Qdrant in Docker)
+make up                # docker compose up -d (PostgreSQL :5433, Qdrant :6333)
+make down              # Stop Docker services
+make clean             # Remove containers, volumes, images
+make shell-db          # psql into PostgreSQL
+make logs              # Tail Docker logs
 
-# 2. Start backend (Flask on :5050)
+# Database
+make init-db           # python backend/init_db.py (runs tables.sql + procedures.sql)
+make seed              # flask seed run (admin + categories)
+
+# Backend (Flask on :5050)
 make run-backend       # cd backend && python run.py
 
-# 3. Start frontend (Angular on :4200, proxies /api to :5050)
+# Frontend (Angular on :4200, proxies /api to :5050)
 make run-frontend      # cd frontend && npx ng serve --proxy-config proxy.conf.json
+make build-frontend    # ng build (production)
 ```
 
-### Database Commands
-```bash
-make migrate                      # flask db upgrade
-make migrate-create msg="desc"    # flask db migrate -m "desc"
-make seed                         # flask seed run (admin + categories)
-make shell-db                     # psql into PostgreSQL
-```
+First-time setup: `make up` → `make init-db` → `make seed` → `make run-backend` + `make run-frontend`
 
-### Other Make Targets
-```bash
-make down          # Stop Docker services
-make logs          # Tail Docker logs
-make status        # docker compose ps
-make clean         # Remove containers, volumes, images
-make build-frontend  # ng build (production)
-```
+After `make clean`: Docker auto-runs the mounted SQL files on first PostgreSQL init, but `make init-db` can re-run them manually.
 
 ## Architecture
 
+### Database Layer — No ORM
+
+All database access uses raw SQL via psycopg2 + PostgreSQL stored functions. There is no SQLAlchemy or any ORM.
+
+- **`postgresql/tables.sql`** — 6 tables (users, categories, documents, document_chunks, chat_history, feedbacks) with indexes, triggers for auto-updating `updated_at`, UUID primary keys as `VARCHAR(36)`
+- **`postgresql/procedures.sql`** — ~30 stored functions named `fn_*` (e.g., `fn_create_user`, `fn_list_documents`, `fn_upsert_feedback`, `fn_get_dashboard_stats`)
+- **`app/db.py`** — Connection pool and query helpers:
+  - `call_fn(fn_name, params, fetch_one/fetch_all, conn)` — calls `SELECT * FROM fn_name(params...)`
+  - `execute(query, params, fetch_one/fetch_all, conn)` — raw SQL
+  - `get_conn()` — stores connection in Flask `g`, auto-returned on teardown
+  - `get_conn_raw()` / `put_conn_raw()` — for background threads that don't have Flask `g`
+- **`app/utils/formatters.py`** — Converts row dicts to API response dicts (format_user, format_document, format_category, format_chat_message, format_feedback)
+
+Paginated queries use `COUNT(*) OVER()` in the stored function. If no rows, the list is empty and total=0 (handled in Python: `rows[0]['total_count'] if rows else 0`).
+
+JSONB columns require `psycopg2.extras.Json()` wrapper when passing dicts/lists.
+
 ### Backend (`backend/`)
 
-Flask app factory in `app/__init__.py`. Entry point: `run.py` (loads `.env` from project root via explicit path).
+Flask app factory in `app/__init__.py`. Entry point: `run.py` (loads `.env` from project root via explicit path). `strict_slashes=False` on `app.url_map` to prevent 308 redirects.
 
 **API blueprints** under `app/api/` — all prefixed `/api/v1/`:
-- `auth/` — register (restricted to @upao.edu.pe), login, token refresh
-- `chat/` — send message, SSE streaming, conversation history
-- `documents/` — upload (PDF, DOCX, XLSX, TXT, images), list, delete
-- `categories/` — CRUD for document categories
-- `users/` — user management (admin)
-- `analytics/` — usage statistics
-- `config_rag/` — RAG parameter tuning
+- `auth/` — register (restricted to @upao.edu.pe), login, refresh, logout, /me
+- `chat/` — POST `/message` (non-streaming), POST `/stream` (SSE), conversations CRUD, feedback
+- `documents/` — upload (triggers background processing), list/get/update/delete, reprocess
+- `categories/` — CRUD with slug generation
+- `users/` — admin-only user management
+- `analytics/` — dashboard stats, daily usage, popular queries, feedback summary
+- `config_rag/` — runtime RAG parameter tuning (in-memory overrides)
 - `health` endpoint at `/api/v1/health`
 
-**Standard response format**: `{ success: bool, message: str, data: any }`
+**Response format**: All endpoints return `{ success: bool, message: str, data: any }`. Paginated endpoints add `{ pagination: { total, page, per_page, pages } }`. Helpers in `app/utils/response.py`.
 
-**Auth**: JWT via Flask-JWT-Extended. Bearer token in Authorization header. Access tokens expire in 1h, refresh in 30d. Role-based access via `role_required` decorator.
+**Auth**: JWT via Flask-JWT-Extended. Bearer token in Authorization header. Access tokens expire in 1h, refresh in 30d. Two decorators: `@auth_required` (any authenticated user), `@role_required('admin')` (admin only).
 
-**RAG pipeline** (`app/rag/`):
-1. Documents are processed (`app/document_processing/`) → chunked (1000 chars, 200 overlap)
-2. Chunks embedded via `nomic-embed-text` (768 dims) through Ollama
-3. Vectors stored in Qdrant collection `upao_documents` (cosine distance)
-4. On query: embed question → retrieve top-k similar chunks → build prompt → stream response from `gemma3:4b` via Ollama
-5. Streaming uses SSE with `{type, content}` and `{type, sources}` events
+**Schemas**: Plain `marshmallow.Schema` (not Flask-Marshmallow) for input validation only. No serialization of DB results — formatters handle that.
 
-**Models** (`app/models/`): All use UUID primary keys. Tables: users, documents, chunks, categories, chat_history, feedback.
+### RAG Pipeline
 
-**Schemas** (`app/schemas/`): Marshmallow for serialization/validation.
+Document processing runs in a **background thread** via `threading.Thread` (in `documents/routes.py`). The thread uses `get_conn_raw()`/`put_conn_raw()` since Flask `g` isn't available.
 
-**Extensions** (`app/extensions.py`): db (SQLAlchemy), migrate, jwt, cors, ma (Marshmallow).
+**Processing flow** (`app/rag/pipeline.py`):
+1. Extract text — factory pattern in `app/document_processing/processor.py` dispatches to PdfProcessor (pdfplumber + PyPDF2 fallback), DocxProcessor, ExcelProcessor, TxtProcessor, ImageProcessor (pytesseract OCR)
+2. Chunk text — `RecursiveCharacterTextSplitter` (1000 chars, 200 overlap) via `app/document_processing/chunker.py`
+3. Embed via `nomic-embed-text` (768 dims) through Ollama → store vectors in Qdrant collection `upao_documents` (cosine distance, batch upsert of 100)
+4. Save chunks in PostgreSQL via `fn_create_chunk`
+5. Update document status and category document count
 
-**Seeds** (`app/seeds/`): CLI commands — `flask seed run` creates admin user and default categories.
+**Query flow** (`app/rag/chain.py`):
+1. Embed question → Qdrant similarity search (top-k, score threshold, optional category filter)
+2. Deduplicate sources by document_id + page (`app/rag/retriever.py`)
+3. Build prompt with context (`app/rag/prompts.py` — Spanish, strict grounding instructions)
+4. Invoke `gemma3:4b` via ChatOllama — either blocking or streaming
+5. SSE streaming yields `{type: 'sources'}`, then `{type: 'token'}` chunks, then `{type: 'done'}`
 
 ### Frontend (`frontend/`)
 
 Angular 18 with standalone components, signals for state, functional guards and interceptors.
 
-**Routing** (`app.routes.ts`):
-- `/login`, `/register` — protected by `noAuthGuard` (redirect if logged in)
-- `/chat` — main interface, `authGuard` required
-- `/admin` — dashboard, `authGuard` + `roleGuard` (admin only)
-- `/profile` — user profile, `authGuard` required
+**Routing** (`app.routes.ts`) — all lazy-loaded:
+- `/login`, `/register` — `noAuthGuard` (redirect if already logged in)
+- `/chat` — main interface, `authGuard`
+- `/admin/**` — dashboard, documents, categories, users, RAG config, test chat — `authGuard` + `roleGuard`
+- `/profile` — `authGuard`
 - `/` redirects to `/chat`
 
-**Core** (`core/`):
-- `services/auth.service.ts` — login, register, token management
-- `services/token.service.ts` — JWT storage in localStorage
-- `guards/` — functional guards (auth, no-auth, role)
-- `interceptors/` — auth token injection, global error handling
+**Chat streaming**: Uses the **fetch API with async generators** (NOT Angular HttpClient) for SSE streaming. See `features/chat/services/chat.service.ts`.
 
-**Chat streaming**: Uses the fetch API with async generators (NOT HttpClient) for SSE streaming from the backend.
+**Auth state**: `core/services/auth.service.ts` uses Angular signals (`currentUser`, `isAuthenticated`, `isAdmin`). Token stored in localStorage via `core/services/token.service.ts`.
 
-**Styling**: Tailwind CSS with UPAO brand colors (primary: `#1E3A5F`, secondary: `#C8102E`) defined in `tailwind.config.js`.
+**Styling**: Tailwind CSS with UPAO brand colors defined in `tailwind.config.js` (primary: `#1E3A5F`, secondary: `#C8102E`).
 
-**Proxy**: `proxy.conf.json` forwards `/api` requests to `http://localhost:5050` during development.
+**Proxy**: `proxy.conf.json` forwards `/api` → `http://localhost:5050`. Frontend environment uses `/api/v1` as `apiUrl`.
 
 ### Infrastructure
 
-**Docker Compose** runs only PostgreSQL and Qdrant:
-- PostgreSQL 16-alpine on port 5433 (maps to internal 5432)
-- Qdrant on ports 6333 (HTTP) and 6334 (gRPC)
-- Init script: `docker/postgres/init.sql` (enables uuid-ossp, pgcrypto)
-- Qdrant config: `docker/qdrant/config.yaml`
+**Docker Compose** (`docker-compose.yml`): PostgreSQL 16-alpine on port 5433, Qdrant on ports 6333/6334. SQL files mounted to `/docker-entrypoint-initdb.d/` for auto-initialization. Qdrant config at `docker/qdrant/config.yaml`.
 
-### Environment
-
-`.env` at project root. `run.py` loads it with an explicit path so it works when running from `backend/`. Key variables:
-- `DATABASE_URL` — if set, used directly; otherwise built from `POSTGRES_*` vars
-- `POSTGRES_HOST=localhost`, `POSTGRES_PORT=5433` — local defaults
-- `OLLAMA_BASE_URL=http://localhost:11434`
-- `QDRANT_HOST=localhost`, `QDRANT_PORT=6333`
+**Environment**: `.env` at project root (see `.env.example`). `run.py` loads it via explicit path. `DATABASE_URL` used directly if set; otherwise built from individual `POSTGRES_*` vars.
 
 ## Conventions
 
-- Backend responses always use `{success, message, data}` shape
-- Angular components are standalone (no NgModules)
-- State managed via Angular signals, not RxJS BehaviorSubjects
-- All database models use UUID primary keys with timestamps
+- All DB operations use `call_fn()` for stored functions or `execute()` for raw SQL — never raw ORM
+- Background threads use `get_conn_raw()`/`put_conn_raw()` with try/finally — never Flask `g`
+- JSONB columns require `psycopg2.extras.Json()` wrapper
+- Backend responses always follow `{success, message, data}` shape
+- Angular components are standalone (no NgModules), state via signals (not BehaviorSubjects)
+- All database tables use UUID primary keys (`VARCHAR(36)`) with timestamps
 - User registration restricted to `@upao.edu.pe` email domain
-- Admin user created via seed, not registration
+- Admin user created via `flask seed run`, not registration
+- Adding a new stored function: add to `postgresql/procedures.sql`, re-run `make init-db` (uses `CREATE OR REPLACE`)
+- Adding a new table: add to `postgresql/tables.sql` with `CREATE TABLE IF NOT EXISTS`, re-run `make init-db`

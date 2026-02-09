@@ -1,6 +1,6 @@
 import os
-from app.extensions import db
-from app.models.user import User
+from werkzeug.security import generate_password_hash
+from app.db import call_fn
 
 
 def seed_admin():
@@ -8,18 +8,10 @@ def seed_admin():
     password = os.getenv('ADMIN_PASSWORD', 'Admin123!')
     full_name = os.getenv('ADMIN_FULL_NAME', 'Administrador UPAO')
 
-    existing = User.query.filter_by(email=email).first()
-    if existing:
-        print(f"Admin ya existe: {email}")
-        return
+    password_hash = generate_password_hash(password)
+    created = call_fn('fn_seed_admin', (email, password_hash, full_name), fetch_one=True)
 
-    admin = User(
-        email=email,
-        full_name=full_name,
-        role='admin',
-        is_active=True,
-    )
-    admin.set_password(password)
-    db.session.add(admin)
-    db.session.commit()
-    print(f"Admin creado: {email}")
+    if created and created['fn_seed_admin']:
+        print(f"Admin creado: {email}")
+    else:
+        print(f"Admin ya existe: {email}")

@@ -1,8 +1,7 @@
-from app.extensions import ma
-from marshmallow import fields
+from marshmallow import Schema, fields
 
 
-class DocumentSchema(ma.Schema):
+class DocumentSchema(Schema):
     id = fields.String(dump_only=True)
     title = fields.String(required=True)
     original_filename = fields.String(dump_only=True)

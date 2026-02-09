@@ -1,7 +1,9 @@
 import os
 from flask import Flask
+from flask_jwt_extended import JWTManager
+from flask_cors import CORS
 from config import config_by_name
-from app.extensions import db, migrate, jwt, cors, ma
+from app.db import init_pool
 
 
 def create_app(config_name=None):
@@ -10,13 +12,16 @@ def create_app(config_name=None):
 
     app = Flask(__name__)
     app.config.from_object(config_by_name[config_name])
+    app.url_map.strict_slashes = False
 
-    # Initialize extensions
-    db.init_app(app)
-    migrate.init_app(app, db)
-    jwt.init_app(app)
-    cors.init_app(app, resources={r"/api/*": {"origins": "*"}})
-    ma.init_app(app)
+    # Initialize connection pool
+    init_pool(app)
+
+    # JWT
+    jwt = JWTManager(app)
+
+    # CORS
+    CORS(app, resources={r"/api/*": {"origins": "*"}})
 
     # Register error handlers
     from app.middleware.error_handlers import register_error_handlers

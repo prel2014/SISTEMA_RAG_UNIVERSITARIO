@@ -1,9 +1,9 @@
 from flask import Blueprint, request
-from app.extensions import db
-from app.models.user import User
+from app.db import call_fn
 from app.middleware.role_required import role_required
 from app.utils.response import success_response, error_response, paginated_response
 from app.utils.pagination import get_pagination_params
+from app.utils.formatters import format_user
 
 users_bp = Blueprint('users', __name__)
 
@@ -14,51 +14,36 @@ def list_users():
     page, per_page = get_pagination_params()
     search = request.args.get('search', '')
 
-    query = User.query
-    if search:
-        query = query.filter(
-            db.or_(
-                User.email.ilike(f'%{search}%'),
-                User.full_name.ilike(f'%{search}%')
-            )
-        )
+    rows = call_fn('fn_list_users', (search, page, per_page), fetch_all=True)
 
-    query = query.order_by(User.created_at.desc())
-    pagination = query.paginate(page=page, per_page=per_page, error_out=False)
+    total = rows[0]['total_count'] if rows else 0
+    items = [format_user(r) for r in rows]
 
-    return paginated_response(
-        items=[u.to_dict() for u in pagination.items],
-        total=pagination.total,
-        page=page,
-        per_page=per_page,
-        message='Usuarios obtenidos exitosamente.'
-    )
+    return paginated_response(items, total, page, per_page, 'Usuarios obtenidos exitosamente.')
 
 
 @users_bp.route('/<user_id>', methods=['GET'])
 @role_required('admin')
 def get_user(user_id):
-    user = User.query.get(user_id)
+    user = call_fn('fn_get_user_by_id', (user_id,), fetch_one=True)
     if not user:
         return error_response('Usuario no encontrado.', 'No encontrado', 404)
-    return success_response(data={'user': user.to_dict()})
+    return success_response(data={'user': format_user(user)})
 
 
 @users_bp.route('/<user_id>/toggle-active', methods=['PUT'])
 @role_required('admin')
 def toggle_user_active(user_id):
-    user = User.query.get(user_id)
+    user = call_fn('fn_get_user_by_id', (user_id,), fetch_one=True)
     if not user:
         return error_response('Usuario no encontrado.', 'No encontrado', 404)
-    if user.role == 'admin':
+    if user['role'] == 'admin':
         return error_response('No se puede desactivar al administrador.', 'No permitido', 403)
 
-    user.is_active = not user.is_active
-    db.session.commit()
-
-    estado = 'activado' if user.is_active else 'desactivado'
+    updated = call_fn('fn_toggle_user_active', (user_id,), fetch_one=True)
+    estado = 'activado' if updated['is_active'] else 'desactivado'
     return success_response(
-        data={'user': user.to_dict()},
+        data={'user': format_user(updated)},
         message=f'Usuario {estado} exitosamente.'
     )
 
@@ -66,12 +51,11 @@ def toggle_user_active(user_id):
 @users_bp.route('/<user_id>', methods=['DELETE'])
 @role_required('admin')
 def delete_user(user_id):
-    user = User.query.get(user_id)
+    user = call_fn('fn_get_user_by_id', (user_id,), fetch_one=True)
     if not user:
         return error_response('Usuario no encontrado.', 'No encontrado', 404)
-    if user.role == 'admin':
+    if user['role'] == 'admin':
         return error_response('No se puede eliminar al administrador.', 'No permitido', 403)
 
-    db.session.delete(user)
-    db.session.commit()
+    call_fn('fn_delete_user', (user_id,), fetch_one=True)
     return success_response(message='Usuario eliminado exitosamente.')

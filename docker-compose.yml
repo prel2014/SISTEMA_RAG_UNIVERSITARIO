@@ -11,7 +11,8 @@ services:
       - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./postgresql/tables.sql:/docker-entrypoint-initdb.d/01-tables.sql
+      - ./postgresql/procedures.sql:/docker-entrypoint-initdb.d/02-procedures.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s

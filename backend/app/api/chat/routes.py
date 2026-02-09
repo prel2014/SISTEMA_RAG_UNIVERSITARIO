@@ -3,14 +3,14 @@ import json
 from flask import Blueprint, request, Response, stream_with_context
 from flask_jwt_extended import get_jwt_identity
 from marshmallow import ValidationError
-from app.extensions import db
-from app.models.chat_history import ChatHistory
-from app.models.feedback import Feedback
+from psycopg2.extras import Json
+from app.db import call_fn
 from app.schemas.chat_schema import ChatMessageSchema
 from app.schemas.feedback_schema import FeedbackCreateSchema
 from app.middleware.auth_middleware import auth_required
 from app.utils.response import success_response, error_response, paginated_response
 from app.utils.pagination import get_pagination_params
+from app.utils.formatters import format_chat_message
 
 chat_bp = Blueprint('chat', __name__)
 message_schema = ChatMessageSchema()
@@ -30,34 +30,21 @@ def send_message():
     category_id = data.get('category_id')
 
     # Save user message
-    user_msg = ChatHistory(
-        conversation_id=conversation_id,
-        user_id=user_id,
-        role='user',
-        content=data['message']
-    )
-    db.session.add(user_msg)
-    db.session.commit()
+    call_fn('fn_create_chat_message', (conversation_id, user_id, 'user', data['message'], None), fetch_one=True)
 
     # Get RAG response
     try:
         from app.rag.chain import get_rag_response
         result = get_rag_response(data['message'], category_id=category_id)
 
-        # Save assistant message
-        assistant_msg = ChatHistory(
-            conversation_id=conversation_id,
-            user_id=user_id,
-            role='assistant',
-            content=result['answer'],
-            source_documents=result.get('sources', [])
-        )
-        db.session.add(assistant_msg)
-        db.session.commit()
+        sources = result.get('sources', [])
+        assistant_msg = call_fn('fn_create_chat_message', (
+            conversation_id, user_id, 'assistant', result['answer'], Json(sources)
+        ), fetch_one=True)
 
         return success_response(
             data={
-                'message': assistant_msg.to_dict(),
+                'message': format_chat_message(assistant_msg),
                 'conversation_id': conversation_id,
             },
             message='Respuesta generada exitosamente.'
@@ -83,14 +70,7 @@ def stream_message():
     category_id = data.get('category_id')
 
     # Save user message
-    user_msg = ChatHistory(
-        conversation_id=conversation_id,
-        user_id=user_id,
-        role='user',
-        content=data['message']
-    )
-    db.session.add(user_msg)
-    db.session.commit()
+    call_fn('fn_create_chat_message', (conversation_id, user_id, 'user', data['message'], None), fetch_one=True)
 
     def generate():
         full_response = ''
@@ -106,17 +86,11 @@ def stream_message():
                     yield f"data: {json.dumps({'type': 'sources', 'sources': sources})}\n\n"
 
             # Save assistant message
-            assistant_msg = ChatHistory(
-                conversation_id=conversation_id,
-                user_id=user_id,
-                role='assistant',
-                content=full_response,
-                source_documents=sources
-            )
-            db.session.add(assistant_msg)
-            db.session.commit()
+            assistant_msg = call_fn('fn_create_chat_message', (
+                conversation_id, user_id, 'assistant', full_response, Json(sources) if sources else None
+            ), fetch_one=True)
 
-            yield f"data: {json.dumps({'type': 'done', 'conversation_id': conversation_id, 'message_id': assistant_msg.id})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'conversation_id': conversation_id, 'message_id': assistant_msg['id']})}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
@@ -137,27 +111,14 @@ def list_conversations():
     user_id = get_jwt_identity()
     page, per_page = get_pagination_params()
 
-    # Get distinct conversations with latest message
-    subquery = db.session.query(
-        ChatHistory.conversation_id,
-        db.func.max(ChatHistory.created_at).label('last_message_at'),
-        db.func.min(ChatHistory.content).label('first_message'),
-    ).filter_by(
-        user_id=user_id, role='user'
-    ).group_by(
-        ChatHistory.conversation_id
-    ).subquery()
+    rows = call_fn('fn_list_conversations', (user_id, page, per_page), fetch_all=True)
 
-    total = db.session.query(subquery).count()
-    conversations = db.session.query(subquery).order_by(
-        subquery.c.last_message_at.desc()
-    ).offset((page - 1) * per_page).limit(per_page).all()
-
+    total = rows[0]['total_count'] if rows else 0
     items = [{
-        'conversation_id': c.conversation_id,
-        'last_message_at': c.last_message_at.isoformat() if c.last_message_at else None,
-        'preview': c.first_message[:100] if c.first_message else '',
-    } for c in conversations]
+        'conversation_id': r['conversation_id'],
+        'last_message_at': r['last_message_at'].isoformat() if r['last_message_at'] else None,
+        'preview': r['preview'] or '',
+    } for r in rows]
 
     return paginated_response(items, total, page, per_page, 'Conversaciones obtenidas.')
 
@@ -166,15 +127,13 @@ def list_conversations():
 @auth_required
 def get_conversation(conversation_id):
     user_id = get_jwt_identity()
-    messages = ChatHistory.query.filter_by(
-        conversation_id=conversation_id, user_id=user_id
-    ).order_by(ChatHistory.created_at).all()
+    rows = call_fn('fn_get_conversation_messages', (conversation_id, user_id), fetch_all=True)
 
-    if not messages:
+    if not rows:
         return error_response('Conversacion no encontrada.', 'No encontrada', 404)
 
     return success_response(
-        data={'messages': [m.to_dict() for m in messages]},
+        data={'messages': [format_chat_message(r) for r in rows]},
         message='Conversacion obtenida exitosamente.'
     )
 
@@ -183,16 +142,10 @@ def get_conversation(conversation_id):
 @auth_required
 def delete_conversation(conversation_id):
     user_id = get_jwt_identity()
-    messages = ChatHistory.query.filter_by(
-        conversation_id=conversation_id, user_id=user_id
-    ).all()
+    result = call_fn('fn_delete_conversation', (conversation_id, user_id), fetch_one=True)
 
-    if not messages:
+    if not result or result['fn_delete_conversation'] == 0:
         return error_response('Conversacion no encontrada.', 'No encontrada', 404)
-
-    for msg in messages:
-        db.session.delete(msg)
-    db.session.commit()
 
     return success_response(message='Conversacion eliminada exitosamente.')
 
@@ -206,24 +159,19 @@ def submit_feedback():
         return error_response(str(err.messages), 'Error de validacion', 400)
 
     user_id = get_jwt_identity()
-    chat_msg = ChatHistory.query.get(data['chat_history_id'])
-    if not chat_msg:
+
+    # Verify chat message exists
+    from app.db import execute
+    msg = execute(
+        'SELECT id FROM chat_history WHERE id = %s',
+        (data['chat_history_id'],),
+        fetch_one=True
+    )
+    if not msg:
         return error_response('Mensaje no encontrado.', 'No encontrado', 404)
 
-    existing = Feedback.query.filter_by(
-        chat_history_id=data['chat_history_id'], user_id=user_id
-    ).first()
-    if existing:
-        existing.rating = data['rating']
-        existing.comment = data.get('comment')
-    else:
-        feedback = Feedback(
-            chat_history_id=data['chat_history_id'],
-            user_id=user_id,
-            rating=data['rating'],
-            comment=data.get('comment')
-        )
-        db.session.add(feedback)
+    call_fn('fn_upsert_feedback', (
+        data['chat_history_id'], user_id, data['rating'], data.get('comment')
+    ), fetch_one=True)
 
-    db.session.commit()
     return success_response(message='Valoracion enviada exitosamente.')

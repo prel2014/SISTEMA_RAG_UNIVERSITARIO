@@ -1,7 +1,7 @@
 from flask import jsonify
 from flask_jwt_extended import verify_jwt_in_request, get_jwt_identity
 from functools import wraps
-from app.models.user import User
+from app.db import call_fn
 
 
 def role_required(role):
@@ -10,7 +10,7 @@ def role_required(role):
         def wrapper(*args, **kwargs):
             verify_jwt_in_request()
             user_id = get_jwt_identity()
-            user = User.query.get(user_id)
+            user = call_fn('fn_get_user_by_id', (user_id,), fetch_one=True)
 
             if not user:
                 return jsonify({
@@ -19,14 +19,14 @@ def role_required(role):
                     'message': 'El usuario asociado al token no existe.'
                 }), 401
 
-            if not user.is_active:
+            if not user['is_active']:
                 return jsonify({
                     'success': False,
                     'error': 'Cuenta desactivada',
                     'message': 'Su cuenta ha sido desactivada.'
                 }), 403
 
-            if user.role != role:
+            if user['role'] != role:
                 return jsonify({
                     'success': False,
                     'error': 'Acceso denegado',

@@ -1,4 +1,4 @@
-.PHONY: up down restart logs clean status shell-db
+.PHONY: up down restart logs clean status shell-db init-db
 
 # Docker (infrastructure only: PostgreSQL + Qdrant)
 up:
@@ -23,15 +23,13 @@ clean:
 	docker compose down -v --rmi local
 	docker volume prune -f
 
+# Database
+init-db:
+	cd backend && python init_db.py
+
 # Backend (local)
 run-backend:
 	cd backend && python run.py
-
-migrate:
-	cd backend && flask db upgrade
-
-migrate-create:
-	cd backend && flask db migrate -m "$(msg)"
 
 seed:
 	cd backend && flask seed run

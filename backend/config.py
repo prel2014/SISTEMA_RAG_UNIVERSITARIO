@@ -10,14 +10,13 @@ class Config:
     JWT_HEADER_NAME = 'Authorization'
     JWT_HEADER_TYPE = 'Bearer'
 
-    SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL') or (
+    DATABASE_URL = os.getenv('DATABASE_URL') or (
         f"postgresql://{os.getenv('POSTGRES_USER', 'upao_user')}"
         f":{os.getenv('POSTGRES_PASSWORD', 'upao_secret_2024')}"
         f"@{os.getenv('POSTGRES_HOST', 'localhost')}"
         f":{os.getenv('POSTGRES_PORT', '5433')}"
         f"/{os.getenv('POSTGRES_DB', 'upao_rag')}"
     )
-    SQLALCHEMY_TRACK_MODIFICATIONS = False
 
     # Ollama
     OLLAMA_BASE_URL = os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')
@@ -59,7 +58,6 @@ class ProductionConfig(Config):
 
 class TestConfig(Config):
     TESTING = True
-    SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
 
 
 config_by_name = {

@@ -1,5 +1,4 @@
-from app.extensions import db
-from app.models.category import Category
+from app.db import call_fn
 
 
 CATEGORIES = [
@@ -63,14 +62,12 @@ CATEGORIES = [
 
 
 def seed_categories():
-    for cat_data in CATEGORIES:
-        existing = Category.query.filter_by(slug=cat_data['slug']).first()
-        if existing:
-            print(f"Categoria ya existe: {cat_data['name']}")
-            continue
+    for cat in CATEGORIES:
+        created = call_fn('fn_seed_category', (
+            cat['name'], cat['slug'], cat['description'], cat['icon'], cat['color']
+        ), fetch_one=True)
 
-        category = Category(**cat_data)
-        db.session.add(category)
-        print(f"Categoria creada: {cat_data['name']}")
-
-    db.session.commit()
+        if created and created['fn_seed_category']:
+            print(f"Categoria creada: {cat['name']}")
+        else:
+            print(f"Categoria ya existe: {cat['name']}")

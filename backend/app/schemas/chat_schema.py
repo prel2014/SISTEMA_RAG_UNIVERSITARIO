@@ -1,14 +1,13 @@
-from app.extensions import ma
-from marshmallow import fields, validate
+from marshmallow import Schema, fields, validate
 
 
-class ChatMessageSchema(ma.Schema):
+class ChatMessageSchema(Schema):
     message = fields.String(required=True, validate=validate.Length(min=1, max=2000))
     conversation_id = fields.String(allow_none=True)
     category_id = fields.String(allow_none=True)
 
 
-class ChatHistorySchema(ma.Schema):
+class ChatHistorySchema(Schema):
     id = fields.String(dump_only=True)
     conversation_id = fields.String(dump_only=True)
     user_id = fields.String(dump_only=True)
