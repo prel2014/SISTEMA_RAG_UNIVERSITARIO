@@ -31,5 +31,6 @@ export class AdminSidebarComponent {
     { path: 'users', icon: 'people', label: 'Usuarios' },
     { path: 'rag-config', icon: 'tune', label: 'Configuracion RAG' },
     { path: 'test-chat', icon: 'chat', label: 'Probar Chat' },
+    { path: 'originality', icon: 'verified', label: 'Verificacion de Tesis' },
   ];
 }

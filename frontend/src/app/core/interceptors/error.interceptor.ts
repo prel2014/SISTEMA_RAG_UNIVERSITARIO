@@ -34,6 +34,7 @@ export const errorInterceptor: HttpInterceptorFn = (req, next) => {
         );
       }
 
+      const tokenBeforeRefresh = tokenService.getAccessToken();
       isRefreshing = true;
       refreshSubject.next(null);
 
@@ -50,7 +51,11 @@ export const errorInterceptor: HttpInterceptorFn = (req, next) => {
         catchError(refreshError => {
           isRefreshing = false;
           refreshSubject.next(null);
-          authService.logout();
+          // Solo cerrar sesion si no hubo un login nuevo durante el refresh
+          const currentToken = tokenService.getAccessToken();
+          if (!currentToken || currentToken === tokenBeforeRefresh) {
+            authService.logout();
+          }
           return throwError(() => refreshError);
         })
       );

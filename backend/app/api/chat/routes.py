@@ -17,6 +17,11 @@ message_schema = ChatMessageSchema()
 feedback_create_schema = FeedbackCreateSchema()
 
 
+def _get_recent_history(conversation_id, user_id, limit=6):
+    rows = call_fn('fn_get_conversation_messages', (conversation_id, user_id), fetch_all=True) or []
+    return [{'role': r['role'], 'content': r['content']} for r in rows[-limit:]]
+
+
 @chat_bp.route('/message', methods=['POST'])
 @auth_required
 def send_message():
@@ -32,10 +37,13 @@ def send_message():
     # Save user message
     call_fn('fn_create_chat_message', (conversation_id, user_id, 'user', data['message'], None), fetch_one=True)
 
-    # Get RAG response
+    # Get recent history (before saving current message it was already saved above)
+    conversation_history = _get_recent_history(conversation_id, user_id)
+
     try:
         from app.rag.chain import get_rag_response
-        result = get_rag_response(data['message'], category_id=category_id)
+        result = get_rag_response(data['message'], category_id=category_id,
+                                  conversation_history=conversation_history)
 
         sources = result.get('sources', [])
         assistant_msg = call_fn('fn_create_chat_message', (
@@ -72,12 +80,16 @@ def stream_message():
     # Save user message
     call_fn('fn_create_chat_message', (conversation_id, user_id, 'user', data['message'], None), fetch_one=True)
 
+    # Get recent history for context
+    conversation_history = _get_recent_history(conversation_id, user_id)
+
     def generate():
         full_response = ''
         sources = []
         try:
             from app.rag.chain import get_rag_response_stream
-            for chunk in get_rag_response_stream(data['message'], category_id=category_id):
+            for chunk in get_rag_response_stream(data['message'], category_id=category_id,
+                                                  conversation_history=conversation_history):
                 if chunk.get('type') == 'token':
                     full_response += chunk['content']
                     yield f"data: {json.dumps({'type': 'token', 'content': chunk['content']})}\n\n"
@@ -85,7 +97,6 @@ def stream_message():
                     sources = chunk['sources']
                     yield f"data: {json.dumps({'type': 'sources', 'sources': sources})}\n\n"
 
-            # Save assistant message
             assistant_msg = call_fn('fn_create_chat_message', (
                 conversation_id, user_id, 'assistant', full_response, Json(sources) if sources else None
             ), fetch_one=True)
@@ -93,6 +104,7 @@ def stream_message():
             yield f"data: {json.dumps({'type': 'done', 'conversation_id': conversation_id, 'message_id': assistant_msg['id']})}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'conversation_id': conversation_id, 'message_id': None})}\n\n"
 
     return Response(
         stream_with_context(generate()),
@@ -160,7 +172,6 @@ def submit_feedback():
 
     user_id = get_jwt_identity()
 
-    # Verify chat message exists
     from app.db import execute
     msg = execute(
         'SELECT id FROM chat_history WHERE id = %s',
@@ -175,3 +186,43 @@ def submit_feedback():
     ), fetch_one=True)
 
     return success_response(message='Valoracion enviada exitosamente.')
+
+
+_FALLBACK_SUGGESTIONS = [
+    'Cuales son los requisitos de admision?',
+    'Como solicito una beca?',
+    'Cual es el calendario academico?',
+    'Donde encuentro los silabos?',
+    'Como realizo un tramite academico?',
+    'Cuales son los servicios de bienestar?',
+]
+
+
+@chat_bp.route('/autocomplete', methods=['GET'])
+@auth_required
+def autocomplete():
+    query = request.args.get('q', '').strip()
+    if len(query) < 3:
+        return success_response(data={'suggestions': []}, message='Sugerencias obtenidas.')
+    rows = call_fn('fn_autocomplete_chat', (query, 3), fetch_all=True) or []
+    suggestions = [{'text': r['suggestion'], 'source': r['source']} for r in rows]
+    return success_response(data={'suggestions': suggestions}, message='Sugerencias obtenidas.')
+
+
+@chat_bp.route('/suggested-questions', methods=['GET'])
+@auth_required
+def suggested_questions():
+    rows = call_fn('fn_get_frequent_questions', (2, 6), fetch_all=True) or []
+    questions = [r['question'] for r in rows]
+    if len(questions) < 3:
+        existing_lower = {q.lower() for q in questions}
+        for fallback in _FALLBACK_SUGGESTIONS:
+            if len(questions) >= 6:
+                break
+            if fallback.lower() not in existing_lower:
+                questions.append(fallback)
+                existing_lower.add(fallback.lower())
+    return success_response(
+        data={'questions': questions[:6]},
+        message='Preguntas sugeridas obtenidas.'
+    )

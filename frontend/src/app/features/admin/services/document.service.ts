@@ -3,7 +3,7 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { environment } from '../../../../environments/environment';
 import { ApiResponse, PaginatedResponse } from '../../../core/models/user.model';
-import { Document } from '../../../core/models/document.model';
+import { Document, BatchUploadData } from '../../../core/models/document.model';
 
 @Injectable({ providedIn: 'root' })
 export class DocumentService {
@@ -41,5 +41,12 @@ export class DocumentService {
 
   reprocess(id: string): Observable<ApiResponse<{ document: Document }>> {
     return this.http.post<ApiResponse<{ document: Document }>>(`${this.apiUrl}/${id}/reprocess`, {});
+  }
+
+  uploadBatch(files: File[], categoryId?: string): Observable<ApiResponse<BatchUploadData>> {
+    const formData = new FormData();
+    files.forEach(file => formData.append('files', file));
+    if (categoryId) formData.append('category_id', categoryId);
+    return this.http.post<ApiResponse<BatchUploadData>>(`${this.apiUrl}/upload-batch`, formData);
   }
 }

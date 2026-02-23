@@ -7,6 +7,7 @@ import { MessageBubbleComponent } from '../../components/message-bubble/message-
 import { ChatInputComponent } from '../../components/chat-input/chat-input.component';
 import { SuggestionChipsComponent } from '../../components/suggestion-chips/suggestion-chips.component';
 import { ChatHistorySidebarComponent } from '../../components/chat-history-sidebar/chat-history-sidebar.component';
+import { MarkdownPipe } from '../../../../shared/pipes/markdown.pipe';
 
 @Component({
   selector: 'app-chat-page',
@@ -17,6 +18,7 @@ import { ChatHistorySidebarComponent } from '../../components/chat-history-sideb
     ChatInputComponent,
     SuggestionChipsComponent,
     ChatHistorySidebarComponent,
+    MarkdownPipe,
   ],
   template: `
     <div class="flex h-[calc(100vh-4rem)]">
@@ -49,10 +51,8 @@ import { ChatHistorySidebarComponent } from '../../components/chat-history-sideb
                         <span class="material-icons text-sm">smart_toy</span>
                       </div>
                       <div class="bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
-                        <div class="text-sm leading-relaxed whitespace-pre-wrap">
-                          {{ streamingContent() }}
-                          <span class="inline-block w-2 h-4 bg-primary animate-pulse ml-0.5"></span>
-                        </div>
+                        <div class="markdown-content text-sm leading-relaxed" [innerHTML]="streamingContent() | markdown"></div>
+                        <span class="inline-block w-2 h-4 bg-primary animate-pulse ml-0.5 align-middle"></span>
                       </div>
                     </div>
                   </div>

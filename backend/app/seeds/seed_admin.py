@@ -5,7 +5,7 @@ from app.db import call_fn
 
 def seed_admin():
     email = os.getenv('ADMIN_EMAIL', 'admin@upao.edu.pe')
-    password = os.getenv('ADMIN_PASSWORD', 'Admin123!')
+    password = os.getenv('ADMIN_PASSWORD', 'Clave123')
     full_name = os.getenv('ADMIN_FULL_NAME', 'Administrador UPAO')
 
     password_hash = generate_password_hash(password)

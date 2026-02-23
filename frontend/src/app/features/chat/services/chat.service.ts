@@ -6,6 +6,11 @@ import { TokenService } from '../../../core/services/token.service';
 import { ApiResponse, PaginatedResponse } from '../../../core/models/user.model';
 import { ChatMessage, ChatRequest, Conversation } from '../../../core/models/chat.model';
 
+export interface AutocompleteSuggestion {
+  text: string;
+  source: 'history' | 'document';
+}
+
 @Injectable({
   providedIn: 'root'
 })
@@ -90,6 +95,19 @@ export class ChatService {
     return this.http.post<ApiResponse<void>>(
       `${this.apiUrl}/feedback`,
       { chat_history_id: chatHistoryId, rating, comment }
+    );
+  }
+
+  getAutocompleteSuggestions(query: string): Observable<ApiResponse<{ suggestions: AutocompleteSuggestion[] }>> {
+    return this.http.get<ApiResponse<{ suggestions: AutocompleteSuggestion[] }>>(
+      `${this.apiUrl}/autocomplete`,
+      { params: { q: query } }
+    );
+  }
+
+  getSuggestedQuestions(): Observable<ApiResponse<{ questions: string[] }>> {
+    return this.http.get<ApiResponse<{ questions: string[] }>>(
+      `${this.apiUrl}/suggested-questions`
     );
   }
 }

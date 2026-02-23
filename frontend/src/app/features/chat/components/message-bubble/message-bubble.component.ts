@@ -3,11 +3,12 @@ import { CommonModule } from '@angular/common';
 import { ChatMessage } from '../../../../core/models/chat.model';
 import { SourcePanelComponent } from '../source-panel/source-panel.component';
 import { FeedbackButtonsComponent } from '../feedback-buttons/feedback-buttons.component';
+import { MarkdownPipe } from '../../../../shared/pipes/markdown.pipe';
 
 @Component({
   selector: 'app-message-bubble',
   standalone: true,
-  imports: [CommonModule, SourcePanelComponent, FeedbackButtonsComponent],
+  imports: [CommonModule, SourcePanelComponent, FeedbackButtonsComponent, MarkdownPipe],
   template: `
     <div class="flex mb-4" [ngClass]="message.role === 'user' ? 'justify-end' : 'justify-start'">
       <div class="max-w-[80%]">
@@ -26,7 +27,11 @@ import { FeedbackButtonsComponent } from '../feedback-buttons/feedback-buttons.c
                [ngClass]="message.role === 'user'
                  ? 'bg-primary text-white rounded-tr-sm'
                  : 'bg-white border border-gray-200 text-gray-800 rounded-tl-sm'">
-            <div class="markdown-content text-sm leading-relaxed whitespace-pre-wrap">{{ message.content }}</div>
+            @if (message.role === 'assistant') {
+              <div class="markdown-content text-sm leading-relaxed" [innerHTML]="message.content | markdown"></div>
+            } @else {
+              <div class="text-sm leading-relaxed whitespace-pre-wrap">{{ message.content }}</div>
+            }
           </div>
         </div>
 

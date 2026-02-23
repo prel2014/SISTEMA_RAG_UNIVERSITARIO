@@ -1,3 +1,6 @@
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="langchain_core")
+
 from dotenv import load_dotenv
 from pathlib import Path
 

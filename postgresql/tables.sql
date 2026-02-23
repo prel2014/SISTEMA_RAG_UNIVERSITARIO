@@ -5,6 +5,7 @@
 -- Extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+CREATE EXTENSION IF NOT EXISTS ai CASCADE;   -- instala pgvector + pgai automáticamente
 
 -- =====================================================
 -- Function: auto-update updated_at
@@ -50,6 +51,7 @@ CREATE TABLE IF NOT EXISTS categories (
     icon            VARCHAR(50) DEFAULT 'folder',
     color           VARCHAR(7) DEFAULT '#1E3A5F',
     is_active       BOOLEAN DEFAULT TRUE,
+    exclude_from_rag BOOLEAN DEFAULT FALSE,
     document_count  INTEGER DEFAULT 0,
     created_at      TIMESTAMPTZ DEFAULT NOW()
 );
@@ -70,10 +72,13 @@ CREATE TABLE IF NOT EXISTS documents (
     uploaded_by         VARCHAR(36) NOT NULL REFERENCES users(id),
     processing_status   VARCHAR(20) DEFAULT 'pending' CHECK (processing_status IN ('pending', 'processing', 'completed', 'failed')),
     processing_error    TEXT,
+    summary             TEXT,
     chunk_count         INTEGER DEFAULT 0,
     created_at          TIMESTAMPTZ DEFAULT NOW(),
     updated_at          TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS summary TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_documents_category ON documents(category_id);
 CREATE INDEX IF NOT EXISTS idx_documents_status ON documents(processing_status);
@@ -92,12 +97,31 @@ CREATE TABLE IF NOT EXISTS document_chunks (
     document_id     VARCHAR(36) NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
     chunk_index     INTEGER NOT NULL,
     content         TEXT NOT NULL,
-    qdrant_point_id VARCHAR(36),
+    embedding       vector(768),
     metadata_json   JSONB,
+    chunk_type      VARCHAR(20) DEFAULT 'content'
+                        CHECK (chunk_type IN ('content', 'summary')),
     created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
+ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS chunk_type VARCHAR(20) DEFAULT 'content';
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'document_chunks_chunk_type_check'
+    ) THEN
+        ALTER TABLE document_chunks
+            ADD CONSTRAINT document_chunks_chunk_type_check
+            CHECK (chunk_type IN ('content', 'summary'));
+    END IF;
+END $$;
+
+-- Índice HNSW para búsqueda aproximada eficiente (coseno)
+CREATE INDEX IF NOT EXISTS idx_chunks_embedding
+    ON document_chunks USING hnsw (embedding vector_cosine_ops);
+
 CREATE INDEX IF NOT EXISTS idx_chunks_document ON document_chunks(document_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_type ON document_chunks(chunk_type);
 
 -- =====================================================
 -- Table: chat_history
@@ -129,3 +153,35 @@ CREATE TABLE IF NOT EXISTS feedbacks (
 
 CREATE INDEX IF NOT EXISTS idx_feedbacks_chat ON feedbacks(chat_history_id);
 CREATE INDEX IF NOT EXISTS idx_feedbacks_user ON feedbacks(user_id);
+
+-- =====================================================
+-- Table: thesis_checks
+-- =====================================================
+CREATE TABLE IF NOT EXISTS thesis_checks (
+    id                  VARCHAR(36) PRIMARY KEY DEFAULT uuid_generate_v4()::TEXT,
+    filename            VARCHAR(500) NOT NULL,
+    file_path           VARCHAR(1000) NOT NULL,
+    file_type           VARCHAR(20) NOT NULL,
+    file_size           INTEGER,
+    checked_by          VARCHAR(36) NOT NULL REFERENCES users(id),
+    status              VARCHAR(20) NOT NULL DEFAULT 'pending'
+                            CHECK (status IN ('pending','processing','completed','failed')),
+    processing_error    TEXT,
+    originality_score   NUMERIC(5,2),
+    plagiarism_level    VARCHAR(20),
+    total_chunks        INTEGER DEFAULT 0,
+    flagged_chunks      INTEGER DEFAULT 0,
+    matches_summary     JSONB,
+    score_threshold     NUMERIC(4,2) DEFAULT 0.70,
+    created_at          TIMESTAMPTZ DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_thesis_checks_user    ON thesis_checks(checked_by);
+CREATE INDEX IF NOT EXISTS idx_thesis_checks_status  ON thesis_checks(status);
+CREATE INDEX IF NOT EXISTS idx_thesis_checks_created ON thesis_checks(created_at DESC);
+
+DROP TRIGGER IF EXISTS trg_thesis_checks_updated_at ON thesis_checks;
+CREATE TRIGGER trg_thesis_checks_updated_at
+    BEFORE UPDATE ON thesis_checks
+    FOR EACH ROW EXECUTE FUNCTION fn_update_timestamp();

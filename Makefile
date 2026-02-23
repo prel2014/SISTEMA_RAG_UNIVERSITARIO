@@ -36,7 +36,7 @@ seed:
 
 # Frontend (local)
 run-frontend:
-	cd frontend && npx ng serve --proxy-config proxy.conf.json
+	cd frontend && npx ng serve --host 0.0.0.0 --proxy-config proxy.conf.json
 
 build-frontend:
 	cd frontend && npx ng build

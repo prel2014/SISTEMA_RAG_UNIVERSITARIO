@@ -9,6 +9,8 @@ import { PaginationComponent } from '../../../../shared/components/pagination/pa
 import { ConfirmDialogComponent } from '../../../../shared/components/confirm-dialog/confirm-dialog.component';
 import { ToastService } from '../../../../shared/components/toast/toast.component';
 import { Document, Category } from '../../../../core/models/document.model';
+import { PAGE_SIZE } from '../../../../shared/constants/pagination';
+import { getStatusLabel, getStatusBadgeClass } from '../../../../shared/utils/status.utils';
 
 @Component({
   selector: 'app-document-management',
@@ -75,13 +77,8 @@ import { Document, Category } from '../../../../core/models/document.model';
                   <td class="px-4 py-3 text-sm text-gray-600">{{ doc.category?.name || '-' }}</td>
                   <td class="px-4 py-3">
                     <span class="text-xs font-medium px-2 py-1 rounded-full"
-                          [ngClass]="{
-                            'bg-green-100 text-green-700': doc.processing_status === 'completed',
-                            'bg-yellow-100 text-yellow-700': doc.processing_status === 'processing',
-                            'bg-gray-100 text-gray-600': doc.processing_status === 'pending',
-                            'bg-red-100 text-red-700': doc.processing_status === 'failed'
-                          }">
-                      {{ statusLabels[doc.processing_status] }}
+                          [ngClass]="getStatusBadgeClass(doc.processing_status)">
+                      {{ getStatusLabel(doc.processing_status) }}
                     </span>
                   </td>
                   <td class="px-4 py-3 text-sm text-gray-600">{{ doc.chunk_count }}</td>
@@ -105,7 +102,7 @@ import { Document, Category } from '../../../../core/models/document.model';
               }
             </tbody>
           </table>
-          <app-pagination [total]="totalDocs()" [currentPage]="currentPage" [perPage]="20" (pageChange)="onPageChange($event)" />
+          <app-pagination [total]="totalDocs()" [currentPage]="currentPage" [perPage]="PAGE_SIZE" (pageChange)="onPageChange($event)" />
         </div>
 
         <!-- Upload dialog -->
@@ -126,6 +123,10 @@ export class DocumentManagementComponent implements OnInit {
   private catService = inject(CategoryService);
   private toast = inject(ToastService);
 
+  readonly PAGE_SIZE = PAGE_SIZE;
+  readonly getStatusLabel = getStatusLabel;
+  readonly getStatusBadgeClass = getStatusBadgeClass;
+
   documents = signal<Document[]>([]);
   categories = signal<Category[]>([]);
   totalDocs = signal(0);
@@ -136,13 +137,6 @@ export class DocumentManagementComponent implements OnInit {
   filterCategory = '';
   filterStatus = '';
   currentPage = 1;
-
-  statusLabels: Record<string, string> = {
-    completed: 'Completado',
-    processing: 'Procesando',
-    pending: 'Pendiente',
-    failed: 'Fallido',
-  };
 
   ngOnInit(): void {
     this.loadDocuments();

@@ -30,4 +30,8 @@ export const adminRoutes: Routes = [
     path: 'test-chat',
     loadComponent: () => import('./pages/test-chat/test-chat.component').then(m => m.TestChatComponent),
   },
+  {
+    path: 'originality',
+    loadComponent: () => import('./pages/originality/originality.component').then(m => m.OriginalityComponent),
+  },
 ];

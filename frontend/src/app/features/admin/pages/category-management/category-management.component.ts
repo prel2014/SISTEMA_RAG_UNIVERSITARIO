@@ -43,6 +43,14 @@ import { Category } from '../../../../core/models/document.model';
                 <input type="text" [(ngModel)]="formDescription"
                        class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary outline-none">
               </div>
+              <div class="md:col-span-2">
+                <label class="flex items-center gap-2 cursor-pointer select-none">
+                  <input type="checkbox" [(ngModel)]="formExcludeFromRag"
+                         class="w-4 h-4 rounded accent-primary">
+                  <span class="text-sm font-medium text-gray-700">Excluir del RAG del chat</span>
+                  <span class="text-xs text-gray-400">(los documentos de esta categoria no aparecen en las respuestas del asistente)</span>
+                </label>
+              </div>
             </div>
             <div class="mt-4 flex space-x-3">
               <button (click)="saveCategory()" class="px-4 py-2 bg-primary hover:bg-primary-600 text-white rounded-lg text-sm">
@@ -63,6 +71,7 @@ import { Category } from '../../../../core/models/document.model';
                 <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Descripcion</th>
                 <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Documentos</th>
                 <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Estado</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">RAG</th>
                 <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Acciones</th>
               </tr>
             </thead>
@@ -79,6 +88,12 @@ import { Category } from '../../../../core/models/document.model';
                     <span class="text-xs px-2 py-1 rounded-full"
                           [ngClass]="cat.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'">
                       {{ cat.is_active ? 'Activa' : 'Inactiva' }}
+                    </span>
+                  </td>
+                  <td class="px-4 py-3">
+                    <span class="text-xs px-2 py-1 rounded-full"
+                          [ngClass]="cat.exclude_from_rag ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'">
+                      {{ cat.exclude_from_rag ? 'Excluida' : 'Incluida' }}
                     </span>
                   </td>
                   <td class="px-4 py-3">
@@ -116,6 +131,7 @@ export class CategoryManagementComponent implements OnInit {
   formName = '';
   formDescription = '';
   formColor = '#1E3A5F';
+  formExcludeFromRag = false;
 
   ngOnInit(): void {
     this.loadCategories();
@@ -132,11 +148,12 @@ export class CategoryManagementComponent implements OnInit {
     this.formName = cat.name;
     this.formDescription = cat.description || '';
     this.formColor = cat.color;
+    this.formExcludeFromRag = cat.exclude_from_rag;
     this.showForm.set(true);
   }
 
   saveCategory(): void {
-    const data = { name: this.formName, description: this.formDescription, color: this.formColor };
+    const data = { name: this.formName, description: this.formDescription, color: this.formColor, exclude_from_rag: this.formExcludeFromRag };
     const ed = this.editing();
     const obs = ed ? this.catService.update(ed.id, data) : this.catService.create(data);
     obs.subscribe({
@@ -145,6 +162,7 @@ export class CategoryManagementComponent implements OnInit {
         this.showForm.set(false);
         this.formName = '';
         this.formDescription = '';
+        this.formExcludeFromRag = false;
         this.loadCategories();
       },
       error: (err) => this.toast.error(err.error?.message || 'Error al guardar.'),

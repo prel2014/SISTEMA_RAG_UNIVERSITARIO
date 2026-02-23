@@ -3,7 +3,7 @@ import uuid
 from flask import current_app
 
 
-ALLOWED_EXTENSIONS = {'pdf', 'docx', 'xlsx', 'xls', 'txt', 'png', 'jpg', 'jpeg'}
+ALLOWED_EXTENSIONS = {'pdf', 'docx', 'xlsx', 'xls'}
 
 
 def allowed_file(filename):

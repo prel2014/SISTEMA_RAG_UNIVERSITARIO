@@ -117,6 +117,7 @@ $$ LANGUAGE plpgsql;
 -- DOCUMENTS FUNCTIONS
 -- =====================================================
 
+DROP FUNCTION IF EXISTS fn_create_document(VARCHAR,VARCHAR,VARCHAR,VARCHAR,INTEGER,VARCHAR,VARCHAR);
 CREATE OR REPLACE FUNCTION fn_create_document(
     p_title VARCHAR,
     p_filename VARCHAR,
@@ -130,7 +131,7 @@ RETURNS TABLE(
     id VARCHAR, title VARCHAR, original_filename VARCHAR, file_path VARCHAR,
     file_type VARCHAR, file_size INTEGER, category_id VARCHAR,
     uploaded_by VARCHAR, processing_status VARCHAR, processing_error TEXT,
-    chunk_count INTEGER, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ,
+    summary TEXT, chunk_count INTEGER, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ,
     category_name VARCHAR, category_slug VARCHAR, category_color VARCHAR, category_icon VARCHAR
 ) AS $$
 DECLARE
@@ -144,7 +145,7 @@ BEGIN
     SELECT d.id, d.title, d.original_filename, d.file_path,
            d.file_type, d.file_size, d.category_id,
            d.uploaded_by, d.processing_status, d.processing_error,
-           d.chunk_count, d.created_at, d.updated_at,
+           d.summary, d.chunk_count, d.created_at, d.updated_at,
            c.name AS category_name, c.slug AS category_slug,
            c.color AS category_color, c.icon AS category_icon
     FROM documents d
@@ -154,6 +155,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 
+DROP FUNCTION IF EXISTS fn_list_documents(VARCHAR,VARCHAR,VARCHAR,INTEGER,INTEGER);
 CREATE OR REPLACE FUNCTION fn_list_documents(
     p_search VARCHAR DEFAULT '',
     p_cat_id VARCHAR DEFAULT '',
@@ -165,7 +167,7 @@ RETURNS TABLE(
     id VARCHAR, title VARCHAR, original_filename VARCHAR, file_path VARCHAR,
     file_type VARCHAR, file_size INTEGER, category_id VARCHAR,
     uploaded_by VARCHAR, processing_status VARCHAR, processing_error TEXT,
-    chunk_count INTEGER, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ,
+    summary TEXT, chunk_count INTEGER, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ,
     category_name VARCHAR, category_slug VARCHAR, category_color VARCHAR, category_icon VARCHAR,
     total_count BIGINT
 ) AS $$
@@ -176,7 +178,7 @@ BEGIN
     SELECT d.id, d.title, d.original_filename, d.file_path,
            d.file_type, d.file_size, d.category_id,
            d.uploaded_by, d.processing_status, d.processing_error,
-           d.chunk_count, d.created_at, d.updated_at,
+           d.summary, d.chunk_count, d.created_at, d.updated_at,
            c.name AS category_name, c.slug AS category_slug,
            c.color AS category_color, c.icon AS category_icon,
            COUNT(*) OVER() AS total_count
@@ -192,12 +194,13 @@ END;
 $$ LANGUAGE plpgsql;
 
 
+DROP FUNCTION IF EXISTS fn_get_document(VARCHAR);
 CREATE OR REPLACE FUNCTION fn_get_document(p_id VARCHAR)
 RETURNS TABLE(
     id VARCHAR, title VARCHAR, original_filename VARCHAR, file_path VARCHAR,
     file_type VARCHAR, file_size INTEGER, category_id VARCHAR,
     uploaded_by VARCHAR, processing_status VARCHAR, processing_error TEXT,
-    chunk_count INTEGER, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ,
+    summary TEXT, chunk_count INTEGER, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ,
     category_name VARCHAR, category_slug VARCHAR, category_color VARCHAR, category_icon VARCHAR
 ) AS $$
 BEGIN
@@ -205,7 +208,7 @@ BEGIN
     SELECT d.id, d.title, d.original_filename, d.file_path,
            d.file_type, d.file_size, d.category_id,
            d.uploaded_by, d.processing_status, d.processing_error,
-           d.chunk_count, d.created_at, d.updated_at,
+           d.summary, d.chunk_count, d.created_at, d.updated_at,
            c.name AS category_name, c.slug AS category_slug,
            c.color AS category_color, c.icon AS category_icon
     FROM documents d
@@ -215,6 +218,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 
+DROP FUNCTION IF EXISTS fn_update_document(VARCHAR,VARCHAR,VARCHAR);
 CREATE OR REPLACE FUNCTION fn_update_document(
     p_id VARCHAR,
     p_title VARCHAR DEFAULT NULL,
@@ -224,7 +228,7 @@ RETURNS TABLE(
     id VARCHAR, title VARCHAR, original_filename VARCHAR, file_path VARCHAR,
     file_type VARCHAR, file_size INTEGER, category_id VARCHAR,
     uploaded_by VARCHAR, processing_status VARCHAR, processing_error TEXT,
-    chunk_count INTEGER, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ,
+    summary TEXT, chunk_count INTEGER, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ,
     category_name VARCHAR, category_slug VARCHAR, category_color VARCHAR, category_icon VARCHAR
 ) AS $$
 BEGIN
@@ -237,7 +241,7 @@ BEGIN
     SELECT d.id, d.title, d.original_filename, d.file_path,
            d.file_type, d.file_size, d.category_id,
            d.uploaded_by, d.processing_status, d.processing_error,
-           d.chunk_count, d.created_at, d.updated_at,
+           d.summary, d.chunk_count, d.created_at, d.updated_at,
            c.name AS category_name, c.slug AS category_slug,
            c.color AS category_color, c.icon AS category_icon
     FROM documents d
@@ -286,6 +290,17 @@ END;
 $$ LANGUAGE plpgsql;
 
 
+CREATE OR REPLACE FUNCTION fn_update_document_summary(
+    p_id      VARCHAR,
+    p_summary TEXT
+)
+RETURNS VOID AS $$
+BEGIN
+    UPDATE documents SET summary = p_summary WHERE documents.id = p_id;
+END;
+$$ LANGUAGE plpgsql;
+
+
 CREATE OR REPLACE FUNCTION fn_reset_document_for_reprocess(p_id VARCHAR)
 RETURNS BOOLEAN AS $$
 BEGIN
@@ -298,6 +313,7 @@ BEGIN
     UPDATE documents SET
         processing_status = 'pending',
         processing_error = NULL,
+        summary = NULL,
         chunk_count = 0
     WHERE documents.id = p_id;
 
@@ -334,17 +350,18 @@ $$ LANGUAGE plpgsql;
 -- CATEGORIES FUNCTIONS
 -- =====================================================
 
+DROP FUNCTION IF EXISTS fn_list_categories(BOOLEAN);
 CREATE OR REPLACE FUNCTION fn_list_categories(p_active_only BOOLEAN DEFAULT TRUE)
 RETURNS TABLE(
     id VARCHAR, name VARCHAR, slug VARCHAR, description TEXT,
-    icon VARCHAR, color VARCHAR, is_active BOOLEAN, document_count INTEGER,
-    created_at TIMESTAMPTZ
+    icon VARCHAR, color VARCHAR, is_active BOOLEAN, exclude_from_rag BOOLEAN,
+    document_count INTEGER, created_at TIMESTAMPTZ
 ) AS $$
 BEGIN
     RETURN QUERY
     SELECT c.id, c.name, c.slug, c.description,
-           c.icon, c.color, c.is_active, c.document_count,
-           c.created_at
+           c.icon, c.color, c.is_active, c.exclude_from_rag,
+           c.document_count, c.created_at
     FROM categories c
     WHERE (NOT p_active_only OR c.is_active = TRUE)
     ORDER BY c.name;
@@ -352,6 +369,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 
+DROP FUNCTION IF EXISTS fn_create_category(VARCHAR,VARCHAR,TEXT,VARCHAR,VARCHAR);
 CREATE OR REPLACE FUNCTION fn_create_category(
     p_name VARCHAR,
     p_slug VARCHAR,
@@ -361,31 +379,32 @@ CREATE OR REPLACE FUNCTION fn_create_category(
 )
 RETURNS TABLE(
     id VARCHAR, name VARCHAR, slug VARCHAR, description TEXT,
-    icon VARCHAR, color VARCHAR, is_active BOOLEAN, document_count INTEGER,
-    created_at TIMESTAMPTZ
+    icon VARCHAR, color VARCHAR, is_active BOOLEAN, exclude_from_rag BOOLEAN,
+    document_count INTEGER, created_at TIMESTAMPTZ
 ) AS $$
 BEGIN
     RETURN QUERY
     INSERT INTO categories (name, slug, description, icon, color)
     VALUES (p_name, p_slug, p_desc, p_icon, p_color)
     RETURNING categories.id, categories.name, categories.slug, categories.description,
-              categories.icon, categories.color, categories.is_active, categories.document_count,
-              categories.created_at;
+              categories.icon, categories.color, categories.is_active, categories.exclude_from_rag,
+              categories.document_count, categories.created_at;
 END;
 $$ LANGUAGE plpgsql;
 
 
+DROP FUNCTION IF EXISTS fn_get_category(VARCHAR);
 CREATE OR REPLACE FUNCTION fn_get_category(p_id VARCHAR)
 RETURNS TABLE(
     id VARCHAR, name VARCHAR, slug VARCHAR, description TEXT,
-    icon VARCHAR, color VARCHAR, is_active BOOLEAN, document_count INTEGER,
-    created_at TIMESTAMPTZ
+    icon VARCHAR, color VARCHAR, is_active BOOLEAN, exclude_from_rag BOOLEAN,
+    document_count INTEGER, created_at TIMESTAMPTZ
 ) AS $$
 BEGIN
     RETURN QUERY
     SELECT c.id, c.name, c.slug, c.description,
-           c.icon, c.color, c.is_active, c.document_count,
-           c.created_at
+           c.icon, c.color, c.is_active, c.exclude_from_rag,
+           c.document_count, c.created_at
     FROM categories c WHERE c.id = p_id;
 END;
 $$ LANGUAGE plpgsql;
@@ -405,6 +424,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 
+DROP FUNCTION IF EXISTS fn_update_category(VARCHAR,VARCHAR,VARCHAR,TEXT,VARCHAR,VARCHAR,BOOLEAN,BOOLEAN);
 CREATE OR REPLACE FUNCTION fn_update_category(
     p_id VARCHAR,
     p_name VARCHAR DEFAULT NULL,
@@ -412,12 +432,13 @@ CREATE OR REPLACE FUNCTION fn_update_category(
     p_desc TEXT DEFAULT NULL,
     p_icon VARCHAR DEFAULT NULL,
     p_color VARCHAR DEFAULT NULL,
-    p_is_active BOOLEAN DEFAULT NULL
+    p_is_active BOOLEAN DEFAULT NULL,
+    p_exclude_from_rag BOOLEAN DEFAULT NULL
 )
 RETURNS TABLE(
     id VARCHAR, name VARCHAR, slug VARCHAR, description TEXT,
-    icon VARCHAR, color VARCHAR, is_active BOOLEAN, document_count INTEGER,
-    created_at TIMESTAMPTZ
+    icon VARCHAR, color VARCHAR, is_active BOOLEAN, exclude_from_rag BOOLEAN,
+    document_count INTEGER, created_at TIMESTAMPTZ
 ) AS $$
 BEGIN
     UPDATE categories SET
@@ -426,13 +447,14 @@ BEGIN
         description = COALESCE(p_desc, categories.description),
         icon = COALESCE(p_icon, categories.icon),
         color = COALESCE(p_color, categories.color),
-        is_active = COALESCE(p_is_active, categories.is_active)
+        is_active = COALESCE(p_is_active, categories.is_active),
+        exclude_from_rag = COALESCE(p_exclude_from_rag, categories.exclude_from_rag)
     WHERE categories.id = p_id;
 
     RETURN QUERY
     SELECT c.id, c.name, c.slug, c.description,
-           c.icon, c.color, c.is_active, c.document_count,
-           c.created_at
+           c.icon, c.color, c.is_active, c.exclude_from_rag,
+           c.document_count, c.created_at
     FROM categories c WHERE c.id = p_id;
 END;
 $$ LANGUAGE plpgsql;
@@ -454,24 +476,73 @@ $$ LANGUAGE plpgsql;
 -- CHUNKS FUNCTIONS
 -- =====================================================
 
+DROP FUNCTION IF EXISTS fn_create_chunk(VARCHAR,INTEGER,TEXT,FLOAT[],JSONB);
+DROP FUNCTION IF EXISTS fn_create_chunk(VARCHAR,INTEGER,TEXT,FLOAT[],JSONB,VARCHAR);
 CREATE OR REPLACE FUNCTION fn_create_chunk(
-    p_doc_id VARCHAR,
-    p_index INTEGER,
-    p_content TEXT,
-    p_qdrant_id VARCHAR DEFAULT NULL,
-    p_metadata JSONB DEFAULT NULL
+    p_doc_id     VARCHAR,
+    p_index      INTEGER,
+    p_content    TEXT,
+    p_embedding  FLOAT[] DEFAULT NULL,
+    p_metadata   JSONB DEFAULT NULL,
+    p_chunk_type VARCHAR DEFAULT 'content'
 )
 RETURNS TABLE(
     id VARCHAR, document_id VARCHAR, chunk_index INTEGER, content TEXT,
-    qdrant_point_id VARCHAR, metadata_json JSONB, created_at TIMESTAMPTZ
+    chunk_type VARCHAR, metadata_json JSONB, created_at TIMESTAMPTZ
 ) AS $$
 BEGIN
     RETURN QUERY
-    INSERT INTO document_chunks (document_id, chunk_index, content, qdrant_point_id, metadata_json)
-    VALUES (p_doc_id, p_index, p_content, p_qdrant_id, p_metadata)
+    INSERT INTO document_chunks (document_id, chunk_index, content, embedding, metadata_json, chunk_type)
+    VALUES (p_doc_id, p_index, p_content,
+            CASE WHEN p_embedding IS NOT NULL THEN p_embedding::vector(768) END,
+            p_metadata, p_chunk_type)
     RETURNING document_chunks.id, document_chunks.document_id, document_chunks.chunk_index,
-              document_chunks.content, document_chunks.qdrant_point_id,
+              document_chunks.content, document_chunks.chunk_type,
               document_chunks.metadata_json, document_chunks.created_at;
+END;
+$$ LANGUAGE plpgsql;
+
+
+DROP FUNCTION IF EXISTS fn_search_similar(FLOAT[],INTEGER,FLOAT,VARCHAR);
+DROP FUNCTION IF EXISTS fn_search_similar(FLOAT[],INTEGER,FLOAT,VARCHAR,BOOLEAN);
+DROP FUNCTION IF EXISTS fn_search_similar(FLOAT[],INTEGER,FLOAT,VARCHAR,BOOLEAN,VARCHAR[]);
+DROP FUNCTION IF EXISTS fn_search_similar(FLOAT[],INTEGER,FLOAT,VARCHAR,BOOLEAN,VARCHAR[],VARCHAR);
+CREATE OR REPLACE FUNCTION fn_search_similar(
+    p_query_embedding  FLOAT[],
+    p_top_k            INTEGER   DEFAULT 5,
+    p_score_threshold  FLOAT     DEFAULT 0.35,
+    p_category_id      VARCHAR   DEFAULT '',
+    p_include_excluded BOOLEAN   DEFAULT FALSE,
+    p_document_ids     VARCHAR[] DEFAULT NULL,
+    p_chunk_type       VARCHAR   DEFAULT 'content'
+)
+RETURNS TABLE(
+    content TEXT, document_id VARCHAR, title VARCHAR,
+    page INTEGER, score FLOAT, category_id VARCHAR
+) AS $$
+DECLARE
+    v_embedding vector(768) := p_query_embedding::vector(768);
+BEGIN
+    RETURN QUERY
+    SELECT
+        dc.content,
+        dc.document_id,
+        d.title,
+        COALESCE((dc.metadata_json->>'page')::INTEGER, 1) AS page,
+        (1 - (dc.embedding <=> v_embedding))::FLOAT AS score,
+        COALESCE(d.category_id, '') AS category_id
+    FROM document_chunks dc
+    JOIN documents d ON d.id = dc.document_id
+    LEFT JOIN categories c ON c.id = d.category_id
+    WHERE d.processing_status = 'completed'
+      AND dc.embedding IS NOT NULL
+      AND dc.chunk_type = p_chunk_type
+      AND (p_category_id = '' OR d.category_id = p_category_id)
+      AND (p_document_ids IS NULL OR d.id = ANY(p_document_ids))
+      AND (p_include_excluded OR d.category_id IS NULL OR NOT COALESCE(c.exclude_from_rag, FALSE))
+      AND (1 - (dc.embedding <=> v_embedding)) >= p_score_threshold
+    ORDER BY dc.embedding <=> v_embedding
+    LIMIT p_top_k;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -532,7 +603,9 @@ BEGIN
     RETURN QUERY
     SELECT
         ch.conversation_id,
-        LEFT(MIN(CASE WHEN ch.role = 'user' THEN ch.content END), 100) AS preview,
+        (SELECT LEFT(ch2.content, 100) FROM chat_history ch2
+         WHERE ch2.conversation_id = ch.conversation_id AND ch2.role = 'user'
+         ORDER BY ch2.created_at ASC LIMIT 1) AS preview,
         MAX(ch.created_at) AS last_message_at,
         COUNT(*) AS message_count,
         COUNT(*) OVER() AS total_count
@@ -711,6 +784,158 @@ $$ LANGUAGE plpgsql;
 
 
 -- =====================================================
+-- THESIS CHECK FUNCTIONS
+-- =====================================================
+
+CREATE OR REPLACE FUNCTION fn_create_thesis_check(
+    p_filename      VARCHAR,
+    p_file_path     VARCHAR,
+    p_file_type     VARCHAR,
+    p_file_size     INTEGER,
+    p_checked_by    VARCHAR,
+    p_threshold     NUMERIC DEFAULT 0.70
+)
+RETURNS TABLE(
+    id VARCHAR, filename VARCHAR, file_path VARCHAR, file_type VARCHAR,
+    file_size INTEGER, checked_by VARCHAR, status VARCHAR, processing_error TEXT,
+    originality_score NUMERIC, plagiarism_level VARCHAR, total_chunks INTEGER,
+    flagged_chunks INTEGER, matches_summary JSONB, score_threshold NUMERIC,
+    created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ
+) AS $$
+BEGIN
+    RETURN QUERY
+    INSERT INTO thesis_checks (filename, file_path, file_type, file_size, checked_by, score_threshold)
+    VALUES (p_filename, p_file_path, p_file_type, p_file_size, p_checked_by, p_threshold)
+    RETURNING
+        thesis_checks.id, thesis_checks.filename, thesis_checks.file_path, thesis_checks.file_type,
+        thesis_checks.file_size, thesis_checks.checked_by, thesis_checks.status, thesis_checks.processing_error,
+        thesis_checks.originality_score, thesis_checks.plagiarism_level, thesis_checks.total_chunks,
+        thesis_checks.flagged_chunks, thesis_checks.matches_summary, thesis_checks.score_threshold,
+        thesis_checks.created_at, thesis_checks.updated_at;
+END;
+$$ LANGUAGE plpgsql;
+
+
+CREATE OR REPLACE FUNCTION fn_update_thesis_check_status(
+    p_id            VARCHAR,
+    p_status        VARCHAR,
+    p_error         TEXT        DEFAULT NULL,
+    p_score         NUMERIC     DEFAULT NULL,
+    p_level         VARCHAR     DEFAULT NULL,
+    p_total         INTEGER     DEFAULT NULL,
+    p_flagged       INTEGER     DEFAULT NULL,
+    p_matches       JSONB       DEFAULT NULL
+)
+RETURNS VOID AS $$
+BEGIN
+    UPDATE thesis_checks SET
+        status            = p_status,
+        processing_error  = COALESCE(p_error, thesis_checks.processing_error),
+        originality_score = COALESCE(p_score, thesis_checks.originality_score),
+        plagiarism_level  = COALESCE(p_level, thesis_checks.plagiarism_level),
+        total_chunks      = COALESCE(p_total, thesis_checks.total_chunks),
+        flagged_chunks    = COALESCE(p_flagged, thesis_checks.flagged_chunks),
+        matches_summary   = COALESCE(p_matches, thesis_checks.matches_summary)
+    WHERE thesis_checks.id = p_id;
+END;
+$$ LANGUAGE plpgsql;
+
+
+CREATE OR REPLACE FUNCTION fn_list_thesis_checks(
+    p_checked_by    VARCHAR DEFAULT '',
+    p_status        VARCHAR DEFAULT '',
+    p_page          INTEGER DEFAULT 1,
+    p_per_page      INTEGER DEFAULT 20
+)
+RETURNS TABLE(
+    id VARCHAR, filename VARCHAR, file_path VARCHAR, file_type VARCHAR,
+    file_size INTEGER, checked_by VARCHAR, checker_name VARCHAR,
+    status VARCHAR, processing_error TEXT,
+    originality_score NUMERIC, plagiarism_level VARCHAR, total_chunks INTEGER,
+    flagged_chunks INTEGER, score_threshold NUMERIC,
+    created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ,
+    total_count BIGINT
+) AS $$
+DECLARE
+    v_offset INTEGER := (p_page - 1) * p_per_page;
+BEGIN
+    RETURN QUERY
+    SELECT
+        tc.id, tc.filename, tc.file_path, tc.file_type,
+        tc.file_size, tc.checked_by, u.full_name AS checker_name,
+        tc.status, tc.processing_error,
+        tc.originality_score, tc.plagiarism_level, tc.total_chunks,
+        tc.flagged_chunks, tc.score_threshold,
+        tc.created_at, tc.updated_at,
+        COUNT(*) OVER() AS total_count
+    FROM thesis_checks tc
+    JOIN users u ON u.id = tc.checked_by
+    WHERE (p_checked_by = '' OR tc.checked_by = p_checked_by)
+      AND (p_status = '' OR tc.status = p_status)
+    ORDER BY tc.created_at DESC
+    LIMIT p_per_page OFFSET v_offset;
+END;
+$$ LANGUAGE plpgsql;
+
+
+CREATE OR REPLACE FUNCTION fn_get_thesis_check(p_id VARCHAR)
+RETURNS TABLE(
+    id VARCHAR, filename VARCHAR, file_path VARCHAR, file_type VARCHAR,
+    file_size INTEGER, checked_by VARCHAR, checker_name VARCHAR,
+    status VARCHAR, processing_error TEXT,
+    originality_score NUMERIC, plagiarism_level VARCHAR, total_chunks INTEGER,
+    flagged_chunks INTEGER, matches_summary JSONB, score_threshold NUMERIC,
+    created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        tc.id, tc.filename, tc.file_path, tc.file_type,
+        tc.file_size, tc.checked_by, u.full_name AS checker_name,
+        tc.status, tc.processing_error,
+        tc.originality_score, tc.plagiarism_level, tc.total_chunks,
+        tc.flagged_chunks, tc.matches_summary, tc.score_threshold,
+        tc.created_at, tc.updated_at
+    FROM thesis_checks tc
+    JOIN users u ON u.id = tc.checked_by
+    WHERE tc.id = p_id;
+END;
+$$ LANGUAGE plpgsql;
+
+
+CREATE OR REPLACE FUNCTION fn_delete_thesis_check(p_id VARCHAR)
+RETURNS VARCHAR AS $$
+DECLARE
+    v_file_path VARCHAR;
+BEGIN
+    SELECT tc.file_path INTO v_file_path FROM thesis_checks tc WHERE tc.id = p_id;
+    IF v_file_path IS NULL THEN RETURN NULL; END IF;
+    DELETE FROM thesis_checks WHERE thesis_checks.id = p_id;
+    RETURN v_file_path;
+END;
+$$ LANGUAGE plpgsql;
+
+
+CREATE OR REPLACE FUNCTION fn_get_originality_stats()
+RETURNS TABLE(
+    total_checks    BIGINT,
+    completed       BIGINT,
+    avg_score       NUMERIC,
+    high_risk       BIGINT
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        COUNT(*) AS total_checks,
+        COUNT(*) FILTER (WHERE tc.status = 'completed') AS completed,
+        ROUND(AVG(tc.originality_score) FILTER (WHERE tc.status = 'completed'), 2) AS avg_score,
+        COUNT(*) FILTER (WHERE tc.plagiarism_level IN ('high', 'very_high')) AS high_risk
+    FROM thesis_checks tc;
+END;
+$$ LANGUAGE plpgsql;
+
+
+-- =====================================================
 -- SEED FUNCTIONS
 -- =====================================================
 
@@ -761,5 +986,76 @@ BEGIN
         ALTER TABLE feedbacks ADD CONSTRAINT uq_feedback_chat_user
             UNIQUE (chat_history_id, user_id);
     END IF;
+END;
+$$;
+
+
+-- =====================================================
+-- DOCUMENT AUTO-CATEGORIZATION
+-- =====================================================
+
+CREATE OR REPLACE FUNCTION fn_set_document_category(p_id VARCHAR, p_cat_id VARCHAR)
+RETURNS VOID AS $$
+BEGIN
+    UPDATE documents SET category_id = NULLIF(p_cat_id, '') WHERE documents.id = p_id;
+END;
+$$ LANGUAGE plpgsql;
+
+
+-- =====================================================
+-- CHAT AUTOCOMPLETE
+-- =====================================================
+
+CREATE OR REPLACE FUNCTION fn_autocomplete_chat(
+    p_query  VARCHAR,
+    p_limit  INTEGER DEFAULT 3
+)
+RETURNS TABLE(suggestion TEXT, source VARCHAR, frequency BIGINT)
+LANGUAGE plpgsql AS $$
+BEGIN
+    RETURN QUERY
+    SELECT DISTINCT
+        TRIM(SUBSTRING(
+            dc.content,
+            GREATEST(1, POSITION(LOWER(p_query) IN LOWER(dc.content)) - 30),
+            LENGTH(p_query) + 90
+        ))                   AS suggestion,
+        'document'::VARCHAR  AS source,
+        0::BIGINT            AS frequency
+    FROM document_chunks dc
+    JOIN documents d ON d.id = dc.document_id
+    LEFT JOIN categories c ON c.id = d.category_id
+    WHERE dc.content ILIKE '%' || p_query || '%'
+      AND d.processing_status = 'completed'
+      AND (c.id IS NULL
+           OR (c.slug  NOT ILIKE '%tesis%'
+           AND c.name  NOT ILIKE '%tesis%'))
+    LIMIT p_limit;
+END;
+$$;
+
+
+-- =====================================================
+-- SUGGESTED QUESTIONS (frequent from chat history)
+-- =====================================================
+
+CREATE OR REPLACE FUNCTION fn_get_frequent_questions(
+    p_min_frequency  INTEGER DEFAULT 2,
+    p_limit          INTEGER DEFAULT 6
+)
+RETURNS TABLE(question TEXT, frequency BIGINT)
+LANGUAGE plpgsql AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        ch.content   AS question,
+        COUNT(*)     AS frequency
+    FROM chat_history ch
+    WHERE ch.role = 'user'
+      AND LENGTH(TRIM(ch.content)) >= 10
+    GROUP BY ch.content
+    HAVING COUNT(*) >= p_min_frequency
+    ORDER BY frequency DESC
+    LIMIT p_limit;
 END;
 $$;

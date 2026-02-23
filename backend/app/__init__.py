@@ -39,6 +39,7 @@ def create_app(config_name=None):
     from app.api.chat.routes import chat_bp
     from app.api.analytics.routes import analytics_bp
     from app.api.config_rag.routes import config_rag_bp
+    from app.api.originality.routes import originality_bp
 
     app.register_blueprint(auth_bp, url_prefix='/api/v1/auth')
     app.register_blueprint(users_bp, url_prefix='/api/v1/users')
@@ -47,6 +48,7 @@ def create_app(config_name=None):
     app.register_blueprint(chat_bp, url_prefix='/api/v1/chat')
     app.register_blueprint(analytics_bp, url_prefix='/api/v1/analytics')
     app.register_blueprint(config_rag_bp, url_prefix='/api/v1/config/rag')
+    app.register_blueprint(originality_bp, url_prefix='/api/v1/originality')
 
     # Health check
     @app.route('/api/v1/health')

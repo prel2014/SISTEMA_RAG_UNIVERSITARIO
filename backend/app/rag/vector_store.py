@@ -1,127 +1,77 @@
-import uuid
-from qdrant_client import QdrantClient
-from qdrant_client.models import (
-    Distance, VectorParams, PointStruct,
-    Filter, FieldCondition, MatchValue
-)
+from psycopg2.extras import Json
 from flask import current_app
+from app.db import call_fn, get_conn
 from app.rag.embeddings import get_embeddings
 
-
-_client = None
-VECTOR_SIZE = 768  # nomic-embed-text dimensions
+BATCH_SIZE = 32
 
 
-def get_qdrant_client():
-    global _client
-    if _client is None:
-        _client = QdrantClient(
-            host=current_app.config['QDRANT_HOST'],
-            port=current_app.config['QDRANT_PORT'],
-        )
-    return _client
-
-
-def ensure_collection():
-    client = get_qdrant_client()
-    collection_name = current_app.config['QDRANT_COLLECTION']
-
-    collections = [c.name for c in client.get_collections().collections]
-    if collection_name not in collections:
-        client.create_collection(
-            collection_name=collection_name,
-            vectors_config=VectorParams(
-                size=VECTOR_SIZE,
-                distance=Distance.COSINE,
-            ),
-        )
-        print(f"Coleccion '{collection_name}' creada en Qdrant.")
-
-
-def add_chunks_to_qdrant(chunks_data):
+def add_chunks_to_postgres(chunks_data):
     """
-    chunks_data: list of dicts with keys: content, document_id, title, category_id, page, chunk_index
-    Returns list of qdrant point IDs.
+    Genera embeddings en batch y guarda cada chunk con su vector en PostgreSQL.
+    chunks_data: list of dicts: content, document_id, title, category_id, page, chunk_index
     """
-    client = get_qdrant_client()
-    collection_name = current_app.config['QDRANT_COLLECTION']
     embeddings = get_embeddings()
+    # Embebir con contexto del documento para mejor coincidencia semántica.
+    # Se almacena c['content'] sin el prefijo; solo el embedding lleva el contexto.
+    texts = [f"[{c['title']}]\n{c['content']}" for c in chunks_data]
 
-    ensure_collection()
+    all_vectors = []
+    for i in range(0, len(texts), BATCH_SIZE):
+        batch = texts[i:i + BATCH_SIZE]
+        all_vectors.extend(embeddings.embed_documents(batch))
 
-    texts = [c['content'] for c in chunks_data]
-    vectors = embeddings.embed_documents(texts)
-
-    points = []
-    point_ids = []
+    conn = get_conn()
     for i, chunk in enumerate(chunks_data):
-        point_id = str(uuid.uuid4())
-        point_ids.append(point_id)
-        points.append(PointStruct(
-            id=point_id,
-            vector=vectors[i],
-            payload={
-                'content': chunk['content'],
-                'document_id': chunk['document_id'],
-                'title': chunk['title'],
-                'category_id': chunk.get('category_id', ''),
-                'page': chunk.get('page', 1),
-                'chunk_index': chunk.get('chunk_index', 0),
-            }
-        ))
+        metadata = Json({'page': chunk['page'], 'title': chunk['title']})
+        call_fn('fn_create_chunk', (
+            chunk['document_id'],
+            chunk['chunk_index'],
+            chunk['content'],
+            all_vectors[i],
+            metadata,
+        ), fetch_one=True, conn=conn)
 
-    # Upload in batches of 100
-    batch_size = 100
-    for i in range(0, len(points), batch_size):
-        batch = points[i:i + batch_size]
-        client.upsert(collection_name=collection_name, points=batch)
-
-    return point_ids
+    return len(chunks_data)
 
 
-def search_similar(query, top_k=None, score_threshold=None, category_id=None):
-    client = get_qdrant_client()
-    collection_name = current_app.config['QDRANT_COLLECTION']
+def search_similar(query, top_k=None, score_threshold=None, category_id=None,
+                   document_ids=None, chunk_type='content'):
+    """Busca chunks similares usando pgvector."""
     embeddings = get_embeddings()
 
     if top_k is None:
         top_k = current_app.config.get('RAG_TOP_K', 5)
     if score_threshold is None:
         score_threshold = current_app.config.get('RAG_SCORE_THRESHOLD', 0.35)
+    if category_id is None:
+        category_id = ''
 
     query_vector = embeddings.embed_query(query)
 
-    search_filter = None
-    if category_id:
-        search_filter = Filter(
-            must=[FieldCondition(key='category_id', match=MatchValue(value=category_id))]
-        )
+    rows = call_fn('fn_search_similar', (
+        query_vector,
+        top_k,
+        score_threshold,
+        category_id,
+        False,           # p_include_excluded
+        document_ids,    # lista de UUIDs o None
+        chunk_type,
+    ), fetch_all=True)
 
-    results = client.search(
-        collection_name=collection_name,
-        query_vector=query_vector,
-        query_filter=search_filter,
-        limit=top_k,
-        score_threshold=score_threshold,
-    )
+    if not rows:
+        return []
 
     return [{
-        'content': r.payload.get('content', ''),
-        'document_id': r.payload.get('document_id', ''),
-        'title': r.payload.get('title', ''),
-        'category_id': r.payload.get('category_id', ''),
-        'page': r.payload.get('page', 1),
-        'score': r.score,
-    } for r in results]
+        'content': r['content'],
+        'document_id': r['document_id'],
+        'title': r['title'],
+        'category_id': r['category_id'],
+        'page': r['page'],
+        'score': r['score'],
+    } for r in rows]
 
 
 def delete_document_vectors(document_id):
-    client = get_qdrant_client()
-    collection_name = current_app.config['QDRANT_COLLECTION']
-
-    client.delete(
-        collection_name=collection_name,
-        points_selector=Filter(
-            must=[FieldCondition(key='document_id', match=MatchValue(value=document_id))]
-        ),
-    )
+    """Elimina los chunks (y sus embeddings) de un documento."""
+    call_fn('fn_delete_chunks_by_document', (document_id,))

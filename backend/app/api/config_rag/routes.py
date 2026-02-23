@@ -18,6 +18,9 @@ def get_rag_config():
         'num_ctx': current_app.config.get('RAG_NUM_CTX', 4096),
         'llm_model': current_app.config.get('LLM_MODEL', 'gemma3:4b'),
         'embedding_model': current_app.config.get('EMBEDDING_MODEL', 'nomic-embed-text'),
+        'candidate_multiplier': current_app.config.get('RAG_CANDIDATE_MULTIPLIER', 4),
+        'max_chunks_per_doc': current_app.config.get('RAG_MAX_CHUNKS_PER_DOC', 2),
+        'enable_reflection': current_app.config.get('RAG_ENABLE_REFLECTION', False),
     }
     config.update(_rag_config_overrides)
     return config
@@ -38,7 +41,8 @@ def update_config():
     data = request.get_json()
     allowed_keys = {
         'chunk_size', 'chunk_overlap', 'top_k',
-        'score_threshold', 'temperature', 'num_ctx'
+        'score_threshold', 'temperature', 'num_ctx',
+        'candidate_multiplier', 'max_chunks_per_doc', 'enable_reflection',
     }
 
     for key, value in data.items():
@@ -50,8 +54,9 @@ def update_config():
             )
 
     # Validate types
-    int_fields = {'chunk_size', 'chunk_overlap', 'top_k', 'num_ctx'}
+    int_fields = {'chunk_size', 'chunk_overlap', 'top_k', 'num_ctx', 'candidate_multiplier', 'max_chunks_per_doc'}
     float_fields = {'score_threshold', 'temperature'}
+    bool_fields = {'enable_reflection'}
 
     for key, value in data.items():
         if key in int_fields:
@@ -60,6 +65,9 @@ def update_config():
         elif key in float_fields:
             if not isinstance(value, (int, float)) or value < 0 or value > 1:
                 return error_response(f'{key} debe ser un numero entre 0 y 1.', 'Validacion', 400)
+        elif key in bool_fields:
+            if not isinstance(value, bool):
+                return error_response(f'{key} debe ser un booleano (true/false).', 'Validacion', 400)
 
     _rag_config_overrides.update(data)
 

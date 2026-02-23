@@ -9,6 +9,7 @@ class CategorySchema(Schema):
     icon = fields.String()
     color = fields.String()
     is_active = fields.Boolean()
+    exclude_from_rag = fields.Boolean()
     document_count = fields.Integer(dump_only=True)
 
 

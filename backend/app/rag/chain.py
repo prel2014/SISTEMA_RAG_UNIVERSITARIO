@@ -1,7 +1,7 @@
 from langchain_ollama import ChatOllama
 from flask import current_app
 from app.rag.retriever import retrieve_context
-from app.rag.prompts import rag_prompt
+from app.rag.prompts import rag_prompt, reflection_prompt, suggestion_prompt
 
 
 def _get_llm(streaming=False):
@@ -14,20 +14,68 @@ def _get_llm(streaming=False):
     )
 
 
-def get_rag_response(question, category_id=None):
+def _format_history(conversation_history):
+    if not conversation_history:
+        return ''
+    lines = ['HISTORIAL PREVIO:']
+    for msg in conversation_history:
+        prefix = 'Usuario' if msg['role'] == 'user' else 'Asistente'
+        lines.append(f"{prefix}: {msg['content'][:300]}")
+    lines.append('')
+    return '\n'.join(lines) + '\n'
+
+
+def _generate_suggestions(question: str) -> str:
+    """Llama al LLM (temp=0.0, no streaming) para generar sugerencias adaptadas."""
+    llm = ChatOllama(
+        model=current_app.config['LLM_MODEL'],
+        base_url=current_app.config['OLLAMA_BASE_URL'],
+        temperature=0.0,
+        num_ctx=current_app.config.get('RAG_NUM_CTX', 4096),
+    )
+    chain = suggestion_prompt | llm
+    result = chain.invoke({'question': question})
+    return result.content
+
+
+def _check_relevance(context: str, question: str) -> str:
+    """Self-RAG: devuelve 'SUFICIENTE', 'PARCIAL' o 'INSUFICIENTE'."""
+    llm = ChatOllama(
+        model=current_app.config['LLM_MODEL'],
+        base_url=current_app.config['OLLAMA_BASE_URL'],
+        temperature=0.0,
+        num_ctx=1024,
+    )
+    chain = reflection_prompt | llm
+    result = chain.invoke({'question': question, 'context': context[:3000]})
+    verdict = result.content.strip().upper()
+    if 'SUFICIENTE' in verdict:
+        return 'SUFICIENTE'
+    if 'PARCIAL' in verdict:
+        return 'PARCIAL'
+    return 'INSUFICIENTE'
+
+
+def get_rag_response(question, category_id=None, conversation_history=None):
     context, sources = retrieve_context(question, category_id=category_id)
 
     if not context:
-        return {
-            'answer': 'No encontre informacion relevante sobre tu pregunta en los documentos disponibles. '
-                      'Te sugiero consultar directamente con la oficina correspondiente de la UPAO '
-                      'o reformular tu pregunta.',
-            'sources': [],
-        }
+        return {'answer': _generate_suggestions(question), 'sources': []}
+
+    # Optional Self-RAG reflection
+    if current_app.config.get('RAG_ENABLE_REFLECTION', False):
+        verdict = _check_relevance(context, question)
+        if verdict == 'INSUFICIENTE':
+            return {'answer': _generate_suggestions(question), 'sources': []}
+        # PARCIAL: continue — LLM will note limitations using available context
 
     llm = _get_llm(streaming=False)
-    prompt_text = rag_prompt.format(context=context, question=question)
-    response = llm.invoke(prompt_text)
+    chain = rag_prompt | llm
+    response = chain.invoke({
+        'context': context,
+        'question': question,
+        'history': _format_history(conversation_history),
+    })
 
     return {
         'answer': response.content,
@@ -35,26 +83,32 @@ def get_rag_response(question, category_id=None):
     }
 
 
-def get_rag_response_stream(question, category_id=None):
+def get_rag_response_stream(question, category_id=None, conversation_history=None):
     context, sources = retrieve_context(question, category_id=category_id)
 
     if not context:
-        yield {
-            'type': 'token',
-            'content': 'No encontre informacion relevante sobre tu pregunta en los documentos disponibles. '
-                       'Te sugiero consultar directamente con la oficina correspondiente de la UPAO '
-                       'o reformular tu pregunta.'
-        }
         yield {'type': 'sources', 'sources': []}
+        yield {'type': 'token', 'content': _generate_suggestions(question)}
         return
 
-    # Send sources first
+    # Optional Self-RAG reflection
+    if current_app.config.get('RAG_ENABLE_REFLECTION', False):
+        verdict = _check_relevance(context, question)
+        if verdict == 'INSUFICIENTE':
+            yield {'type': 'sources', 'sources': []}
+            yield {'type': 'token', 'content': _generate_suggestions(question)}
+            return
+
+    # Sources always before tokens
     yield {'type': 'sources', 'sources': sources}
 
-    # Stream LLM response
     llm = _get_llm(streaming=True)
-    prompt_text = rag_prompt.format(context=context, question=question)
+    chain = rag_prompt | llm
 
-    for chunk in llm.stream(prompt_text):
+    for chunk in chain.stream({
+        'context': context,
+        'question': question,
+        'history': _format_history(conversation_history),
+    }):
         if chunk.content:
             yield {'type': 'token', 'content': chunk.content}

@@ -1,7 +1,7 @@
 import threading
 from flask import Blueprint, request, current_app
 from flask_jwt_extended import get_jwt_identity
-from app.db import call_fn, get_conn_raw, put_conn_raw
+from app.db import call_fn
 from app.middleware.role_required import role_required
 from app.utils.response import success_response, error_response, paginated_response
 from app.utils.pagination import get_pagination_params
@@ -61,7 +61,6 @@ def upload_document():
         title, file.filename, file_path, ext, file_size, category_id, user_id
     ), fetch_one=True)
 
-    # Process document in background
     _process_document_async(current_app._get_current_object(), doc['id'])
 
     return success_response(
@@ -71,18 +70,81 @@ def upload_document():
     )
 
 
+@documents_bp.route('/upload-batch', methods=['POST'])
+@role_required('admin')
+def upload_batch():
+    files = request.files.getlist('files')
+    if not files or all(f.filename == '' for f in files):
+        return error_response('No se enviaron archivos.', 'Archivos requeridos', 400)
+
+    category_id = request.form.get('category_id', '')
+
+    if category_id:
+        cat = call_fn('fn_get_category', (category_id,), fetch_one=True)
+        if not cat:
+            return error_response('Categoria no encontrada.', 'No encontrada', 404)
+
+    user_id = get_jwt_identity()
+    app = current_app._get_current_object()
+
+    results = []
+    for file in files:
+        if file.filename == '':
+            continue
+
+        if not allowed_file(file.filename):
+            results.append({
+                'success': False,
+                'filename': file.filename,
+                'error': 'Tipo de archivo no permitido.',
+            })
+            continue
+
+        try:
+            title = file.filename.rsplit('.', 1)[0]
+            file_size = get_file_size(file)
+            file_path, unique_name = save_upload(file)
+            ext = get_file_extension(file.filename)
+
+            doc = call_fn('fn_create_document', (
+                title, file.filename, file_path, ext, file_size, category_id, user_id
+            ), fetch_one=True)
+
+            _process_document_async(app, doc['id'])
+
+            results.append({
+                'success': True,
+                'filename': file.filename,
+                'document': format_document(doc),
+            })
+        except Exception as e:
+            results.append({
+                'success': False,
+                'filename': file.filename,
+                'error': str(e),
+            })
+
+    total = len(results)
+    successful = sum(1 for r in results if r['success'])
+
+    status_code = 201 if successful == total else (207 if successful > 0 else 400)
+
+    return success_response(
+        data={'results': results, 'total': total, 'successful': successful},
+        message=f'{successful} de {total} archivo(s) subido(s) exitosamente.',
+        status_code=status_code
+    )
+
+
 def _process_document_async(app, document_id):
     def process():
         with app.app_context():
             from app.rag.pipeline import process_document
             try:
-                process_document(document_id)
+                process_document(document_id, app=app)
             except Exception as e:
-                conn = get_conn_raw()
-                try:
-                    call_fn('fn_update_document_status', (document_id, 'failed', str(e)), conn=conn)
-                finally:
-                    put_conn_raw(conn)
+                # process_document ya actualizó el status a 'failed'
+                print(f"[Pipeline error] {document_id}: {e}")
 
     thread = threading.Thread(target=process)
     thread.daemon = True
@@ -128,13 +190,7 @@ def delete_document(doc_id):
     if not doc:
         return error_response('Documento no encontrado.', 'No encontrado', 404)
 
-    # Delete from Qdrant
-    try:
-        from app.rag.vector_store import delete_document_vectors
-        delete_document_vectors(doc_id)
-    except Exception:
-        pass
-
+    # Los chunks se eliminan vía ON DELETE CASCADE en document_chunks
     file_path = call_fn('fn_delete_document', (doc_id,), fetch_one=True)
     if file_path:
         delete_file(file_path['fn_delete_document'])
@@ -149,16 +205,9 @@ def reprocess_document(doc_id):
     if not doc:
         return error_response('Documento no encontrado.', 'No encontrado', 404)
 
-    # Delete existing vectors from Qdrant
-    try:
-        from app.rag.vector_store import delete_document_vectors
-        delete_document_vectors(doc_id)
-    except Exception:
-        pass
-
+    # fn_reset_document_for_reprocess elimina chunks existentes vía DELETE
     call_fn('fn_reset_document_for_reprocess', (doc_id,), fetch_one=True)
 
-    # Re-read the document to get updated state
     doc = call_fn('fn_get_document', (doc_id,), fetch_one=True)
 
     _process_document_async(current_app._get_current_object(), doc_id)

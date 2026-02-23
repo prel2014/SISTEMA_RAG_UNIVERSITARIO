@@ -90,7 +90,7 @@ def update_category(cat_id):
     row = call_fn('fn_update_category', (
         cat_id, name, slug,
         data.get('description'), data.get('icon'), data.get('color'),
-        data.get('is_active')
+        data.get('is_active'), data.get('exclude_from_rag')
     ), fetch_one=True)
 
     return success_response(

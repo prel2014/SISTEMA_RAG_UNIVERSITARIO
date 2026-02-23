@@ -29,11 +29,15 @@ export class AuthService {
 
   private async loadUser(): Promise<void> {
     if (this.tokenService.isLoggedIn()) {
+      const tokenBefore = this.tokenService.getAccessToken();
       try {
         await firstValueFrom(this.getMe());
       } catch {
-        this.tokenService.clearTokens();
-        this.currentUser.set(null);
+        // Solo limpiar si no hubo un login nuevo mientras se validaba
+        if (this.tokenService.getAccessToken() === tokenBefore) {
+          this.tokenService.clearTokens();
+          this.currentUser.set(null);
+        }
       }
     }
   }

@@ -1,12 +1,13 @@
 import { Component, inject, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { HttpClient, HttpParams } from '@angular/common/http';
-import { environment } from '../../../../../environments/environment';
 import { AdminSidebarComponent } from '../../components/admin-sidebar/admin-sidebar.component';
 import { PaginationComponent } from '../../../../shared/components/pagination/pagination.component';
 import { ToastService } from '../../../../shared/components/toast/toast.component';
-import { User, PaginatedResponse, ApiResponse } from '../../../../core/models/user.model';
+import { User } from '../../../../core/models/user.model';
+import { UserService } from '../../services/user.service';
+import { PAGE_SIZE } from '../../../../shared/constants/pagination';
+import { formatDate } from '../../../../shared/utils/date.utils';
 
 @Component({
   selector: 'app-user-management',
@@ -69,15 +70,18 @@ import { User, PaginatedResponse, ApiResponse } from '../../../../core/models/us
               }
             </tbody>
           </table>
-          <app-pagination [total]="totalUsers()" [currentPage]="currentPage" [perPage]="20" (pageChange)="onPageChange($event)" />
+          <app-pagination [total]="totalUsers()" [currentPage]="currentPage" [perPage]="PAGE_SIZE" (pageChange)="onPageChange($event)" />
         </div>
       </div>
     </div>
   `,
 })
 export class UserManagementComponent implements OnInit {
-  private http = inject(HttpClient);
+  private userService = inject(UserService);
   private toast = inject(ToastService);
+
+  readonly PAGE_SIZE = PAGE_SIZE;
+  readonly formatDate = formatDate;
 
   users = signal<User[]>([]);
   totalUsers = signal(0);
@@ -89,10 +93,7 @@ export class UserManagementComponent implements OnInit {
   }
 
   loadUsers(): void {
-    let params = new HttpParams().set('page', this.currentPage.toString());
-    if (this.searchQuery) params = params.set('search', this.searchQuery);
-
-    this.http.get<PaginatedResponse<User>>(`${environment.apiUrl}/users`, { params }).subscribe({
+    this.userService.list({ page: this.currentPage, search: this.searchQuery }).subscribe({
       next: (res) => {
         this.users.set(res.data);
         this.totalUsers.set(res.pagination.total);
@@ -101,7 +102,7 @@ export class UserManagementComponent implements OnInit {
   }
 
   toggleActive(user: User): void {
-    this.http.put<ApiResponse<{ user: User }>>(`${environment.apiUrl}/users/${user.id}/toggle-active`, {}).subscribe({
+    this.userService.toggleActive(user.id).subscribe({
       next: (res) => {
         this.toast.success(res.message);
         this.loadUsers();
@@ -113,10 +114,5 @@ export class UserManagementComponent implements OnInit {
   onPageChange(page: number): void {
     this.currentPage = page;
     this.loadUsers();
-  }
-
-  formatDate(dateStr: string): string {
-    if (!dateStr) return '';
-    return new Date(dateStr).toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' });
   }
 }
