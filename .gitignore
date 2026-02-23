@@ -1,7 +1,7 @@
 # Environment
 .env
 *.env.local
-
+upao_rag_infografia.pdf
 # Python
 __pycache__/
 *.py[cod]
